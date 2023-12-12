@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, cast
+from typing import Any, List, Optional, Tuple, cast
 
 import equinox as eqx
 import jax
@@ -88,9 +88,9 @@ class PTACell(eqx.Module):
         else:
             bias = 0
 
-        h = jnp.tanh(self.weights_hh @ h + self.weights_ih @ x + bias)
+        h_new = jnp.tanh(self.weights_hh @ h + self.weights_ih @ x + bias)
 
-        return h
+        return h_new
 
     def __call__(
         self, h: Float32[Array, "hidden_size"], x: Float32[Array, "input_size"]
@@ -169,20 +169,27 @@ class PTALayerRTRL(eqx.Module):
         self.layer_norm = eqx.nn.LayerNorm(input_size)
         self.glu = GLU(hidden_size, key=glu_key)
 
-    @jax.jit
-    def __call__(self, h_prev: Float32[Array, "ndim"], input: Float32[Array, "ndim"]):
+    def __call__(
+        self,
+        h_prev: Float32[Array, "ndim"],
+        input: Float32[Array, "ndim"],
+        perturbation: Float32[Array, "ndim"],
+    ):
         """
         Applies layer norm to input.
         computes y(t) = g(h(t), input) where ht = PTA(h(t-1), input)
         And applies glu to y(t) and adds skip connection.
 
-        Returns h_out, y_out
+        perturbation is used to later be ablet to compute derivative
+        wrt to this intermediate state.
+
+        Returns h_(t), y_(t)
         """
         # Layer Norm First
-        x = jax.vmap(self.layer_norm)(input)
+        x = self.layer_norm(input)
 
         # To the PTA Cell
-        h_out = self.cell(h_prev, x)
+        h_out = self.cell(h_prev, x) + perturbation
 
         # Project out
         y_out = self.C(h_out) + self.D(x)
@@ -194,6 +201,52 @@ class PTALayerRTRL(eqx.Module):
         y_out = y_out + input
 
         return h_out, y_out
+
+
+class StackedRTRL(eqx.Module):
+    """
+    It acts as a unique cell.
+    """
+
+    encoder: eqx.nn.Linear
+    layers: List[PTALayerRTRL]
+    num_layers: int = eqx.field(static=True)
+    hidden_size: int = eqx.field(static=True)
+    input_size: int = eqx.field(static=True)
+
+    def __init__(
+        self, key: PRNGKeyArray, num_layers: int, hidden_size: int, input_size: int
+    ):
+        self.num_layers = num_layers
+        self.hidden_size = hidden_size
+        self.input_size = input_size
+
+        self.layers = []
+        keys = jax.random.split(key, num=num_layers + 1)
+        for i in range(num_layers):
+            layer = PTALayerRTRL(hidden_size, hidden_size, use_bias=True, key=keys[i])
+            self.layers.append(layer)
+
+        self.encoder = eqx.nn.Linear(
+            in_features=input_size, out_features=hidden_size, key=keys[-1]
+        )
+
+    def __call__(
+        self,
+        h_prev: Float32[Array, "num_layers hidden_size"],
+        input: Float32[Array, "ndim"],
+        perturbations: Float32[Array, "num_layers hidden_size"],
+    ) -> Tuple[Float32[Array, "num_layers hidden_size"], Float32[Array, "hidden_size"]]:
+        x = input
+
+        h_collect: List[Array] = []
+        for i, cell in enumerate(self.layers):
+            h_out, x = cell(h_prev[i], x, perturbations[i])
+            h_collect.append(h_out)
+
+        h_new = jnp.stack(h_collect)
+
+        return h_new, x
 
 
 class PTALayer(eqx.Module):
