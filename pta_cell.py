@@ -231,13 +231,13 @@ class StackedRTRL(eqx.Module):
             in_features=input_size, out_features=hidden_size, key=keys[-1]
         )
 
-    def __call__(
+    def f(
         self,
         h_prev: Float32[Array, "num_layers hidden_size"],
         input: Float32[Array, "ndim"],
         perturbations: Float32[Array, "num_layers hidden_size"],
     ) -> Tuple[Float32[Array, "num_layers hidden_size"], Float32[Array, "hidden_size"]]:
-        x = input
+        x = self.encoder(input)
 
         h_collect: List[Array] = []
         for i, cell in enumerate(self.layers):
@@ -247,6 +247,14 @@ class StackedRTRL(eqx.Module):
         h_new = jnp.stack(h_collect)
 
         return h_new, x
+
+    def __call__(
+        self,
+        h_prev: Float32[Array, "num_layers hidden_size"],
+        input: Float32[Array, "ndim"],
+        perturbations: Float32[Array, "num_layers hidden_size"],
+    ) -> Tuple[Float32[Array, "num_layers hidden_size"], Float32[Array, "hidden_size"]]:
+        self.f(h_prev, input, perturbations)
 
 
 class PTALayer(eqx.Module):
