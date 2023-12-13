@@ -158,6 +158,7 @@ class PTALayerRTRL(eqx.Module):
     D: eqx.nn.Linear
     layer_norm: eqx.nn.LayerNorm
     glu: GLU
+    jacobian_index: eqx.nn.StateIndex
 
     def __init__(
         self, hidden_size: int, input_size: int, use_bias: bool, key: PRNGKeyArray
@@ -168,12 +169,19 @@ class PTALayerRTRL(eqx.Module):
         self.D = eqx.nn.Linear(hidden_size, input_size, use_bias=False, key=d_key)
         self.layer_norm = eqx.nn.LayerNorm(input_size)
         self.glu = GLU(hidden_size, key=glu_key)
+        self.jacobian_index = eqx.nn.StateIndex(
+            (
+                zero_influence_pytree(self.cell),
+                jnp.zeros(shape=(self.cell.hidden_size, self.cell.hidden_size)),
+            )
+        )
 
     def __call__(
         self,
         h_prev: Float32[Array, "ndim"],
         input: Float32[Array, "ndim"],
         perturbation: Float32[Array, "ndim"],
+        jacobian_state: eqx.nn.State,
     ):
         """
         Applies layer norm to input.
@@ -191,6 +199,13 @@ class PTALayerRTRL(eqx.Module):
         # To the PTA Cell
         h_out = self.cell(h_prev, x) + perturbation
 
+        # Compute Jacobian and save them in the state.
+        jacobian_func = jax.jit(jax.jacrev(PTACell.f, argnums=(0, 1)))
+        inmediate_jacobian, dynamics = jacobian_func(self.cell, h_prev, x)
+        new_jacobian_state = jacobian_state.set(
+            self.jacobian_index, (inmmediate_jacobian, dynamics)
+        )
+
         # Project out
         y_out = self.C(h_out) + self.D(x)
 
@@ -200,7 +215,7 @@ class PTALayerRTRL(eqx.Module):
         # Skip Connection
         y_out = y_out + input
 
-        return h_out, y_out
+        return h_out, y_out, new_jacobian_state
 
 
 class StackedRTRL(eqx.Module):
@@ -236,25 +251,32 @@ class StackedRTRL(eqx.Module):
         h_prev: Float32[Array, "num_layers hidden_size"],
         input: Float32[Array, "ndim"],
         perturbations: Float32[Array, "num_layers hidden_size"],
-    ) -> Tuple[Float32[Array, "num_layers hidden_size"], Float32[Array, "hidden_size"]]:
+        jacobians_state: eqx.nn.State,
+    ) -> Tuple[
+        Float32[Array, "num_layers hidden_size"],
+        Float32[Array, "hidden_size"],
+        eqx.nn.State,
+    ]:
         x = self.encoder(input)
+        new_state = jacobians_state
 
         h_collect: List[Array] = []
         for i, cell in enumerate(self.layers):
-            h_out, x = cell(h_prev[i], x, perturbations[i])
+            h_out, x, new_state = cell(h_prev[i], x, perturbations[i], new_state)
             h_collect.append(h_out)
 
         h_new = jnp.stack(h_collect)
 
-        return h_new, x
+        return h_new, x, new_state
 
     def __call__(
         self,
         h_prev: Float32[Array, "num_layers hidden_size"],
         input: Float32[Array, "ndim"],
         perturbations: Float32[Array, "num_layers hidden_size"],
-    ) -> Tuple[Float32[Array, "num_layers hidden_size"], Float32[Array, "hidden_size"]]:
-        self.f(h_prev, input, perturbations)
+        jacobians_state: eqx.nn.State,
+    ):
+        return self.f(h_prev, input, perturbations, jacobians_state)
 
 
 class PTALayer(eqx.Module):
