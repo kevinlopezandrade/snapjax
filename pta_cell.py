@@ -203,7 +203,7 @@ class PTALayerRTRL(eqx.Module):
         jacobian_func = jax.jit(jax.jacrev(PTACell.f, argnums=(0, 1)))
         inmediate_jacobian, dynamics = jacobian_func(self.cell, h_prev, x)
         new_jacobian_state = jacobian_state.set(
-            self.jacobian_index, (inmmediate_jacobian, dynamics)
+            self.jacobian_index, (inmediate_jacobian, dynamics)
         )
 
         # Project out
