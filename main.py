@@ -1,17 +1,26 @@
+from functools import partial
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from equinox.nn import make_with_state
+from equinox.nn import State, StateIndex, make_with_state
 from jax import config
-from jaxtyping import Array, PyTree
+from jaxtyping import Array
 
-from pta_cell import List, PTACell, PTALayerRTRL, StackedRTRL, zero_influence_pytree
+from pta_cell import (
+    Any,
+    List,
+    PTACell,
+    PTALayerRTRL,
+    StackedRTRL,
+    zero_influence_pytree,
+)
 
 config.update("jax_numpy_rank_promotion", "raise")
 
 
-def is_pta_cell(node: PyTree):
-    if isinstance(node, PTACell):
+def is_pta_cell_or_jacobian_index(node: Any):
+    if isinstance(node, PTACell) or isinstance(node, StateIndex):
         return True
     else:
         return False
@@ -62,6 +71,7 @@ def step_loss(
 
 
 # This should be a pure function.
+@eqx.filter_jit
 def forward_rtrl(
     theta_spatial: StackedRTRL,
     theta_rtrl: StackedRTRL,
@@ -123,63 +133,27 @@ def forward_rtrl(
     return spatial_grads
 
 
-num_layers = 2
-hidden_size = 4
-input_size = 4
+num_layers = 10
+hidden_size = 20
+input_size = 20
 key = jax.random.PRNGKey(7)
 
 model, inmediate_jacobians_state = make_with_state(StackedRTRL)(
     key, num_layers=num_layers, hidden_size=hidden_size, input_size=input_size
 )
 
-leaves, treedef = jax.tree_util.tree_flatten(inmediate_jacobians_state)
-state_clone = jax.tree_util.tree_unflatten(treedef, leaves)
-
-
-model_spatial, model_rtrl = eqx.partition(
+model_rtrl, model_spatial = eqx.partition(
     model,
-    eqx.is_array,
-    is_leaf=is_pta_cell,
+    lambda leaf: is_pta_cell_or_jacobian_index(leaf),
+    is_leaf=is_pta_cell_or_jacobian_index,
 )
 
-assert eqx.tree_equal(eqx.combine(model_spatial, model_rtrl), model)
+assert eqx.tree_equal(
+    eqx.combine(model_rtrl, model_spatial, is_leaf=is_pta_cell_or_jacobian_index), model
+)
 
 jacobian = make_zeros_jacobian(model_rtrl)
 input = jnp.ones(shape=(input_size,))
 output = jnp.zeros(shape=(input_size,))
 h_prev = jnp.ones(shape=(num_layers, hidden_size))
 perturbations = jnp.zeros(shape=(num_layers, hidden_size))
-
-gradients = forward_rtrl(
-    model_spatial,
-    model_rtrl,
-    h_prev,
-    input,
-    perturbations,
-    jacobian,
-    inmediate_jacobians_state,
-    output,
-)
-
-# A test is the following
-test_gradient_func = eqx.filter_grad(step_loss_test, has_aux=True)
-
-test_gradients, _ = test_gradient_func(
-    model, h_prev, input, perturbations, state_clone, output
-)
-
-print(eqx.tree_equal(gradients, test_gradients, rtol=1e-05, atol=1e-08))
-# print(gradients.layers[0].cell.weights_hh)
-# print(test_gradients.layers[0].cell.weights_hh)
-# print(jax.tree_util.tree_leaves(test_gradients))
-leaves = jax.tree_util.tree_leaves_with_path(gradients)
-leaves_test = jax.tree_util.tree_leaves_with_path(test_gradients)
-
-assert len(leaves) == len(leaves_test)
-
-for leave_a, leave_b in zip(leaves, leaves_test):
-    key_a, value_a = leave_a
-    key_b, value_b = leave_b
-
-    if not(jnp.allclose(value_a, value_b)):
-        print(key_a, key_b)
