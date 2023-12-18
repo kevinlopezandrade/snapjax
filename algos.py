@@ -78,7 +78,7 @@ def update_cell_jacobians(
     dynamics: Array,
     J_t_prev: RNN,
     matrix_product: Callable[[Array, Array], Array] = jnp.matmul,
-    use_snap_1: bool = True,
+    use_snap_1: bool = False,
 ):
     print("Compiling update_cell_jacobians")
     # RTRL
@@ -115,7 +115,9 @@ def update_jacobians_rtrl(
     for i in range(jacobians_prev.num_layers):
         I_t, D_t = inmediate_jacobians[i]
         J_t_prev = jacobians.layers[i].cell
-        J_t = update_cell_jacobians(I_t, D_t, J_t_prev, matrix_product)
+        J_t = update_cell_jacobians(
+            I_t, D_t, J_t_prev, matrix_product, use_snap_1=use_snap_1
+        )
 
         jacobians = eqx.tree_at(lambda model: model.layers[i].cell, jacobians, J_t)
 
@@ -245,38 +247,31 @@ def rtrl(
     return acc_loss, acc_grads, jacobians_T
 
 
-def forward_sequence(model: StackedRNN, inputs: Array, jacobian_state: eqx.nn.State):
+def forward_sequence(model: StackedRNN, inputs: Array):
     hidden_state = jnp.zeros(shape=(model.num_layers, model.hidden_size))
     perturbations = jnp.zeros(shape=(model.num_layers, model.hidden_size))
 
-    def f_repack(carry: Tuple[Array, eqx.nn.State], input: Array):
-        h, jacobian_state = carry
-        h, out, jacobian_state = model(h, input, perturbations, jacobian_state)
-        return (h, jacobian_state), out
+    def f_repack(h: Array, input: Array):
+        h, out, _ = model(h, input, perturbations)
+        return h, out
 
     # Ful forward pass over the sequence
     _, out = jax.lax.scan(
         lambda carry, input: f_repack(carry, input),
-        init=(hidden_state, jacobian_state),
+        init=hidden_state,
         xs=inputs,
     )
 
     return out
 
 
-def loss_func(
-    model: StackedRNN, inputs: Array, jacobian_state: eqx.nn.State, outputs: Array
-):
-    pred = forward_sequence(model, inputs, jacobian_state)
-    errors = jnp.sum((pred - outputs) ** 2, axis=1)
+def loss_func(model: StackedRNN, inputs: Array, targets: Array):
+    pred = forward_sequence(model, inputs)
+    errors = jnp.sum((pred - targets) ** 2, axis=1)
     return jnp.sum(errors)
 
 
-def bptt(
-    model: StackedRNN, inputs: Array, jacobian_state: eqx.nn.State, outputs: Array
-):
-    loss, grads = eqx.filter_value_and_grad(loss_func)(
-        model, inputs, jacobian_state, outputs
-    )
+def bptt(model: StackedRNN, inputs: Array, targets: Array):
+    loss, grads = eqx.filter_value_and_grad(loss_func)(model, inputs, targets)
 
     return loss, grads
