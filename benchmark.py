@@ -10,11 +10,11 @@ from rnn import StackedRNN
 
 T = 100
 num_layers = 4
-hidden_size = 256
-input_size = 256
+hidden_size = 20
+input_size = 20
 key = jax.random.PRNGKey(7)
 
-model, inmediate_jacobians_state = make_with_state(StackedRNN)(
+model = StackedRNN(
     key,
     num_layers=num_layers,
     hidden_size=hidden_size,
@@ -30,7 +30,6 @@ print("Test call to compile jit functions.")
 rtrl(
     model,
     inputs,
-    inmediate_jacobians_state,
     outputs,
     matrix_product=sparse_multiplication,
     use_snap_1=False,
@@ -40,19 +39,16 @@ print("Starting benchmark")
 repeats = 1
 print("Running no optimization")
 res_1 = timeit.timeit(
-    lambda: jax.block_until_ready(
-        rtrl(model, inputs, inmediate_jacobians_state, outputs, use_snap_1=True)
-    ),
+    lambda: jax.block_until_ready(rtrl(model, inputs, outputs, use_snap_1=True)),
     number=repeats,
 )
-
+print(res_1)
 print("Running with optimization")
 res_2 = timeit.timeit(
     lambda: jax.block_until_ready(
         rtrl(
             model,
             inputs,
-            inmediate_jacobians_state,
             outputs,
             matrix_product=sparse_multiplication,
             use_snap_1=True,
@@ -60,6 +56,4 @@ res_2 = timeit.timeit(
     ),
     number=repeats,
 )
-
-print(res_1)
 print(res_2)
