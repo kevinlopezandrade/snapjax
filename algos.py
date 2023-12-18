@@ -1,11 +1,9 @@
-import timeit
-from functools import partial
-from typing import Any, Tuple
+from typing import Any, Callable, Tuple
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from equinox.nn import State, StateIndex, make_with_state
+from equinox.nn import StateIndex
 from jax import config
 from jaxtyping import Array
 
@@ -66,29 +64,18 @@ def step_loss(
     return jnp.sum(diff), (h_t, new_state)
 
 
+@jax.jit
 def sparse_multiplication(D_t: Array, J_t_prev: Array):
-    """
-    J_t_prev: Is of shape, [n_hidden_units, n_hidden_units, n_hidden_units]
-    """
+    if J_t_prev.ndim == 2:
+        return D_t @ J_t_prev
 
-    def product(J_t_theta: Array, i: int):
-        res = jax.vmap(lambda J_t_theta_i_column: D_t[:, i] * J_t_theta_i_column[i])(
-            J_t_theta
-        )
-
-        return res
-
-    final = []
-    for i in range(J_t_prev.shape[0]):
-        final.append(product(J_t_prev[i], i))
-
-    final = jnp.stack(final)
-
-    return final
+    indices = jnp.arange(0, D_t.shape[0])
+    relevant = J_t_prev[indices, indices, :]
+    res = jax.vmap(jnp.outer, in_axes=(1, 0))(D_t, relevant)
+    return res
 
 
 # This should be a pure function.
-@eqx.filter_jit
 def forward_rtrl(
     theta_spatial: StackedRNN,
     theta_rtrl: StackedRNN,
@@ -99,8 +86,11 @@ def forward_rtrl(
     jacobians_prev: StackedRNN,
     inmediate_jacobians_state: eqx.nn.State,
     target: Array,
+    matrix_product: Callable[[Array, Array], Array] = jnp.matmul,
+    use_snap_1: bool = False,
 ):
     step_loss_and_grad = jax.value_and_grad(step_loss, argnums=(0, 4), has_aux=True)
+
     (loss, aux), (grads) = step_loss_and_grad(
         theta_spatial,
         theta_rtrl,
@@ -115,7 +105,7 @@ def forward_rtrl(
     spatial_grads, hidden_states_grads = grads
 
     jacobians = jacobians_prev
-    for i in range(model.num_layers):
+    for i in range(theta_spatial.num_layers):
         inmediate_jacobian, dynamics = inmediate_jacobians_state.get(
             theta_rtrl.layers[i].jacobian_index
         )
@@ -124,15 +114,26 @@ def forward_rtrl(
 
         # RTRL
         J_t = jax.tree_map(
-            lambda i_t, j_t_prev: i_t + dynamics @ j_t_prev,
+            lambda i_t, j_t_prev: i_t + matrix_product(dynamics, j_t_prev),
             inmediate_jacobian,
             J_t_prev,
         )
 
+        if use_snap_1:
+            mask = jax.tree_map(
+                lambda matrix: (jnp.abs(matrix) > 0.0).astype(jnp.float32),
+                inmediate_jacobian,
+            )
+
+            # How efficient is to do this ?
+            # I could potentially do the spatial grads calculation taking
+            # into account
+            J_t = jax.tree_map(lambda mask, j_t: mask * j_t, mask, J_t)
+
         jacobians = eqx.tree_at(lambda model: model.layers[i].cell, jacobians, J_t)
 
     grads = spatial_grads
-    for i in range(model.num_layers):
+    for i in range(theta_spatial.num_layers):
         ht_grad = hidden_states_grads[i]
         rtrl_grads = jax.tree_map(
             lambda jacobian: ht_grad @ jacobian,
@@ -152,7 +153,12 @@ def forward_rtrl(
 
 
 def rtrl(
-    model: StackedRNN, inputs: Array, jacobian_state: eqx.nn.State, targets: Array
+    model: StackedRNN,
+    inputs: Array,
+    jacobian_state: eqx.nn.State,
+    targets: Array,
+    matrix_product: Callable[[Array, Array], Array] = jnp.matmul,
+    use_snap_1: bool = False,
 ):
     model_rtrl, model_spatial = eqx.partition(
         model,
@@ -175,6 +181,8 @@ def rtrl(
             jacobians,
             inmediate_jacobians_state,
             target,
+            matrix_product=matrix_product,
+            use_snap_1=use_snap_1,
         )
 
         return (h, acc_grads, jacobians, inmediate_jacobians_state), loss
@@ -189,7 +197,17 @@ def rtrl(
         xs=(inputs, targets),
     )
 
-    return jnp.sum(losses), carry_out[1]
+    # carry_out = (h_init, acc_grads, zero_jacobians, jacobian_state)
+    # losses = []
+    # for i in range(inputs.shape[0]):
+    #     carry_out, loss = f_repack(carry_out, (inputs[i], targets[i]))
+    #     losses.append(loss)
+    #
+    # losses = jnp.stack(losses)
+
+    h_out, acc_grads, jacobians, _ = carry_out
+
+    return jnp.sum(losses), carry_out[1], jacobians
 
 
 def forward_sequence(model: StackedRNN, inputs: Array, jacobian_state: eqx.nn.State):
@@ -227,29 +245,3 @@ def bptt(
     )
 
     return loss, grads
-
-
-T = 10
-num_layers = 2
-hidden_size = 10
-input_size = 10
-key = jax.random.PRNGKey(7)
-
-model, inmediate_jacobians_state = make_with_state(StackedRNN)(
-    key, num_layers=num_layers, hidden_size=hidden_size, input_size=input_size
-)
-
-inputs = jnp.ones(shape=(T, input_size), dtype=jnp.float32)
-outputs = jnp.zeros(shape=(T, input_size), dtype=jnp.float32)
-loss, grads = bptt(model, inputs, inmediate_jacobians_state, outputs)
-loss_rtrl, grads_rtrl = rtrl(model, inputs, inmediate_jacobians_state, outputs)
-
-for (path_a, leaf_a), (path_b, leaf_b) in zip(
-    jax.tree_util.tree_leaves_with_path(grads),
-    jax.tree_util.tree_leaves_with_path(grads_rtrl),
-):
-    print(path_a, path_b)
-    print(jnp.allclose(leaf_a, leaf_b))
-
-# As expected by the online setup the gradients of the first weight matrices
-# are not equal to bptt.

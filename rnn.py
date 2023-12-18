@@ -127,18 +127,27 @@ class StackedRNN(eqx.Module):
     num_layers: int = eqx.field(static=True)
     hidden_size: int = eqx.field(static=True)
     input_size: int = eqx.field(static=True)
+    use_bias: bool = eqx.field(static=True)
 
     def __init__(
-        self, key: PRNGKeyArray, num_layers: int, hidden_size: int, input_size: int
+        self,
+        key: PRNGKeyArray,
+        num_layers: int,
+        hidden_size: int,
+        input_size: int,
+        use_bias: bool = True,
     ):
         self.num_layers = num_layers
         self.hidden_size = hidden_size
         self.input_size = input_size
+        self.use_bias = use_bias
 
         self.layers = []
         keys = jax.random.split(key, num=num_layers + 1)
         for i in range(num_layers):
-            layer = RNNLayerRTRL(hidden_size, hidden_size, use_bias=True, key=keys[i])
+            layer = RNNLayerRTRL(
+                hidden_size, hidden_size, use_bias=use_bias, key=keys[i]
+            )
             self.layers.append(layer)
 
     def f(
