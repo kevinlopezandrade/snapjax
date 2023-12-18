@@ -136,7 +136,7 @@ class StackedRNN(eqx.Module):
         self.use_bias = use_bias
 
         self.layers = []
-        keys = jax.random.split(key, num=num_layers + 1)
+        keys = jax.random.split(key, num=num_layers)
         for i in range(num_layers):
             layer = RNNLayerRTRL(
                 hidden_size, hidden_size, use_bias=use_bias, key=keys[i]
