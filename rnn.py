@@ -78,7 +78,6 @@ class RNNLayerRTRL(eqx.Module):
     cell: RNN
     C: eqx.nn.Linear
     D: eqx.nn.Linear
-    jacobian_index: eqx.nn.StateIndex
 
     def __init__(
         self, hidden_size: int, input_size: int, use_bias: bool, key: PRNGKeyArray
@@ -87,12 +86,6 @@ class RNNLayerRTRL(eqx.Module):
         self.cell = RNN(hidden_size, input_size, use_bias=use_bias, key=cell_key)
         self.C = eqx.nn.Linear(hidden_size, hidden_size, use_bias=False, key=c_key)
         self.D = eqx.nn.Linear(hidden_size, input_size, use_bias=False, key=d_key)
-        self.jacobian_index = eqx.nn.StateIndex(
-            (
-                zero_influence_pytree(self.cell),
-                jnp.zeros(shape=(self.cell.hidden_size, self.cell.hidden_size)),
-            )
-        )
 
     @eqx.filter_jit
     def __call__(
@@ -100,7 +93,6 @@ class RNNLayerRTRL(eqx.Module):
         h_prev: Float32[Array, "ndim"],
         input: Float32[Array, "ndim"],
         perturbation: Float32[Array, "ndim"],
-        jacobian_state: eqx.nn.State,
     ):
         """
         Returns h_(t), y_(t)
@@ -109,17 +101,14 @@ class RNNLayerRTRL(eqx.Module):
         # To the RNN Cell
         h_out = self.cell(h_prev, input) + perturbation
 
-        # Compute Jacobian and set them in the state.
+        # Compute Jacobian and dynamics
         jacobian_func = jax.jit(jax.jacrev(RNN.f, argnums=(0, 1)))
         inmediate_jacobian, dynamics = jacobian_func(self.cell, h_prev, input)
-        new_jacobian_state = jacobian_state.set(
-            self.jacobian_index, (inmediate_jacobian, dynamics)
-        )
 
         # Project out
         y_out = self.C(jnp.tanh(h_out)) + self.D(input)
 
-        return h_out, y_out, new_jacobian_state
+        return h_out, y_out, inmediate_jacobian, dynamics
 
 
 class StackedRNN(eqx.Module):
@@ -159,30 +148,30 @@ class StackedRNN(eqx.Module):
         h_prev: Float32[Array, "num_layers hidden_size"],
         input: Float32[Array, "ndim"],
         perturbations: Float32[Array, "num_layers hidden_size"],
-        jacobians_state: eqx.nn.State,
     ) -> Tuple[
         Float32[Array, "num_layers hidden_size"],
         Float32[Array, "hidden_size"],
-        eqx.nn.State,
+        List[Tuple[RNN, Array]]
     ]:
         print("Compiling call to StackedRNN.f")
         h_collect: List[Array] = []
+        inmediate_jacobians_collect = []
         for i, cell in enumerate(self.layers):
-            h_out, input, jacobians_state = cell(
-                h_prev[i], input, perturbations[i], jacobians_state
+            h_out, input, inmediate_jacobian, dynamics = cell(
+                h_prev[i], input, perturbations[i]
             )
             h_collect.append(h_out)
+            inmediate_jacobians_collect.append((inmediate_jacobian, dynamics))
 
         h_new = jnp.stack(h_collect)
 
-        return h_new, input, jacobians_state
+        return h_new, input, inmediate_jacobians_collect
 
     def __call__(
         self,
         h_prev: Float32[Array, "num_layers hidden_size"],
         input: Float32[Array, "ndim"],
         perturbations: Float32[Array, "num_layers hidden_size"],
-        jacobians_state: eqx.nn.State,
     ):
         print("Compiling call to StackedRNN.__call__")
-        return self.f(h_prev, input, perturbations, jacobians_state)
+        return self.f(h_prev, input, perturbations)

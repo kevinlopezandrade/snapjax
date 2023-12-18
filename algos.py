@@ -12,8 +12,8 @@ from rnn import RNN, StackedRNN
 config.update("jax_numpy_rank_promotion", "raise")
 
 
-def is_rnn_cell_or_jacobian_index(node: Any):
-    if isinstance(node, RNN) or isinstance(node, StateIndex):
+def is_rnn_cell(node: Any):
+    if isinstance(node, RNN):
         return True
     else:
         return False
@@ -35,14 +35,10 @@ def make_zeros_grads(model: StackedRNN):
     def zeros_in_leaf(leaf):
         if eqx.is_array(leaf):
             return jnp.zeros(shape=leaf.shape)
-        elif isinstance(leaf, StateIndex):
-            return None
         else:
             return None
 
-    zero_grads = jax.tree_map(
-        zeros_in_leaf, model, is_leaf=lambda leaf: isinstance(leaf, StateIndex)
-    )
+    zero_grads = jax.tree_map(zeros_in_leaf, model)
 
     return zero_grads
 
@@ -53,16 +49,15 @@ def step_loss(
     h_prev: Array,
     x_t: Array,
     perturbations: Array,
-    jacobians_state: eqx.nn.State,
     y_t: Array,
 ):
     print("Compiling step_loss")
     model = eqx.combine(model_spatial, model_rtrl)
-    h_t, y_hat, new_state = model(h_prev, x_t, perturbations, jacobians_state)
+    h_t, y_hat, inmediate_jacobians = model(h_prev, x_t, perturbations)
 
     diff = (y_t - y_hat) ** 2
 
-    return jnp.sum(diff), (h_t, y_hat, new_state)
+    return jnp.sum(diff), (h_t, y_hat, inmediate_jacobians)
 
 
 @jax.jit
@@ -109,7 +104,7 @@ def update_cell_jacobians(
 
 def update_jacobians_rtrl(
     jacobians_prev: StackedRNN,
-    inmediate_jacobians_state: eqx.nn.State,
+    inmediate_jacobians: List[Tuple[RNN, Array]],
     matrix_product: Callable[[Array, Array], Array] = jnp.matmul,
     use_snap_1: bool = False,
 ):
@@ -118,7 +113,7 @@ def update_jacobians_rtrl(
     # so it will be fine.
     jacobians = jacobians_prev
     for i in range(jacobians_prev.num_layers):
-        I_t, D_t = inmediate_jacobians_state.get(jacobians.layers[i].jacobian_index)
+        I_t, D_t = inmediate_jacobians[i]
         J_t_prev = jacobians.layers[i].cell
         J_t = update_cell_jacobians(I_t, D_t, J_t_prev, matrix_product)
 
@@ -153,7 +148,6 @@ def forward_rtrl(
     theta_rtrl: StackedRNN,
     acc_grads: StackedRNN,
     jacobians_prev: StackedRNN,
-    inmediate_jacobians_state: eqx.nn.State,
     h_prev: Array,
     input: Array,
     target: Array,
@@ -170,47 +164,44 @@ def forward_rtrl(
         h_prev,
         input,
         perturbations,
-        inmediate_jacobians_state,
         target,
     )
 
-    h_t, y_hat, inmediate_jacobians_state = aux
+    h_t, y_hat, inmediate_jacobians = aux
     spatial_grads, hidden_states_grads = grads
 
     jacobians = update_jacobians_rtrl(
-        jacobians_prev, inmediate_jacobians_state, matrix_product, use_snap_1
+        jacobians_prev, inmediate_jacobians, matrix_product, use_snap_1
     )
 
     grads = update_cells_grads(spatial_grads, hidden_states_grads, jacobians)
     acc_grads = jax.tree_map(lambda acc_grad, grad: acc_grad + grad, acc_grads, grads)
 
-    return h_t, acc_grads, jacobians, inmediate_jacobians_state, loss_t, y_hat
+    return h_t, acc_grads, jacobians, loss_t, y_hat
 
 
 def rtrl(
     model: StackedRNN,
     inputs: Array,
-    inmediate_jacobians_state: eqx.nn.State,
     targets: Array,
     matrix_product: Callable[[Array, Array], Array] = jnp.matmul,
     use_snap_1: bool = False,
 ):
     model_rtrl, model_spatial = eqx.partition(
         model,
-        lambda leaf: is_rnn_cell_or_jacobian_index(leaf),
-        is_leaf=is_rnn_cell_or_jacobian_index,
+        lambda leaf: is_rnn_cell(leaf),
+        is_leaf=is_rnn_cell,
     )
     perturbations = jnp.zeros(shape=(model.num_layers, model.hidden_size))
 
     def forward_repack(carry, data):
         print("Compiling forward_repack")
         input, target = data
-        h_prev, acc_grads, jacobians_prev, inmediate_jacobians_state, acc_loss = carry
+        h_prev, acc_grads, jacobians_prev, acc_loss = carry
         (
             h_t,
             acc_grads,
             jacobians_t,
-            inmediate_jacobians_state,
             loss_t,
             y_hat,
         ) = forward_rtrl(
@@ -218,7 +209,6 @@ def rtrl(
             model_rtrl,
             acc_grads,
             jacobians_prev,
-            inmediate_jacobians_state,
             h_prev,
             input,
             target,
@@ -229,7 +219,7 @@ def rtrl(
 
         acc_loss = acc_loss + loss_t
 
-        return (h_t, acc_grads, jacobians_t, inmediate_jacobians_state, acc_loss), y_hat
+        return (h_t, acc_grads, jacobians_t, acc_loss), y_hat
 
     h_init = jnp.zeros(shape=(model.num_layers, model.hidden_size))
     acc_grads = make_zeros_grads(model)
@@ -238,7 +228,7 @@ def rtrl(
 
     carry_T, _ = jax.lax.scan(
         forward_repack,
-        init=(h_init, acc_grads, zero_jacobians, inmediate_jacobians_state, acc_loss),
+        init=(h_init, acc_grads, zero_jacobians, acc_loss),
         xs=(inputs, targets),
     )
 
@@ -250,7 +240,7 @@ def rtrl(
     #
     # losses = jnp.stack(losses)
 
-    h_T, acc_grads, jacobians_T, _, acc_loss = carry_T
+    h_T, acc_grads, jacobians_T, acc_loss = carry_T
 
     return acc_loss, acc_grads, jacobians_T
 
