@@ -10,8 +10,8 @@ from rnn import StackedRNN
 
 T = 100
 num_layers = 4
-hidden_size = 100
-input_size = 100
+hidden_size = 256
+input_size = 256
 key = jax.random.PRNGKey(7)
 
 model, inmediate_jacobians_state = make_with_state(StackedRNN)(
