@@ -50,6 +50,7 @@ class RNN(eqx.Module):
     def f(
         self, h: Float32[Array, "hidden_size"], x: Float32[Array, "input_size"]
     ) -> Float32[Array, "hidden_size"]:
+        print("Compiling call to RNN.f")
         if self.use_bias:
             bias = self.bias
         else:
@@ -62,6 +63,7 @@ class RNN(eqx.Module):
     def __call__(
         self, h: Float32[Array, "hidden_size"], x: Float32[Array, "input_size"]
     ) -> Float32[Array, "hidden_size"]:
+        print("Compiling call to RNN.__call__")
         return self.f(h, x)
 
 
@@ -92,6 +94,7 @@ class RNNLayerRTRL(eqx.Module):
             )
         )
 
+    @eqx.filter_jit
     def __call__(
         self,
         h_prev: Float32[Array, "ndim"],
@@ -102,6 +105,7 @@ class RNNLayerRTRL(eqx.Module):
         """
         Returns h_(t), y_(t)
         """
+        print("Compiling call to RNNLayerRTRL.__call__")
         # To the RNN Cell
         h_out = self.cell(h_prev, input) + perturbation
 
@@ -161,17 +165,17 @@ class StackedRNN(eqx.Module):
         Float32[Array, "hidden_size"],
         eqx.nn.State,
     ]:
+        print("Compiling call to StackedRNN.f")
         h_collect: List[Array] = []
-        out = input
         for i, cell in enumerate(self.layers):
-            h_out, out, jacobians_state = cell(
-                h_prev[i], out, perturbations[i], jacobians_state
+            h_out, input, jacobians_state = cell(
+                h_prev[i], input, perturbations[i], jacobians_state
             )
             h_collect.append(h_out)
 
         h_new = jnp.stack(h_collect)
 
-        return h_new, out, jacobians_state
+        return h_new, input, jacobians_state
 
     def __call__(
         self,
@@ -180,4 +184,5 @@ class StackedRNN(eqx.Module):
         perturbations: Float32[Array, "num_layers hidden_size"],
         jacobians_state: eqx.nn.State,
     ):
+        print("Compiling call to StackedRNN.__call__")
         return self.f(h_prev, input, perturbations, jacobians_state)
