@@ -3,7 +3,6 @@ from typing import Any, Callable, List, Tuple
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from equinox.nn import StateIndex
 from jax import config
 from jaxtyping import Array
 
@@ -188,6 +187,7 @@ def rtrl(
     targets: Array,
     matrix_product: Callable[[Array, Array], Array] = jnp.matmul,
     use_snap_1: bool = False,
+    use_scan: bool = True,
 ):
     model_rtrl, model_spatial = eqx.partition(
         model,
@@ -228,19 +228,21 @@ def rtrl(
     zero_jacobians = make_zeros_jacobian(model_rtrl)
     acc_loss = 0.0
 
-    carry_T, _ = jax.lax.scan(
-        forward_repack,
-        init=(h_init, acc_grads, zero_jacobians, acc_loss),
-        xs=(inputs, targets),
-    )
+    if use_scan:
+        carry_T, _ = jax.lax.scan(
+            forward_repack,
+            init=(h_init, acc_grads, zero_jacobians, acc_loss),
+            xs=(inputs, targets),
+        )
+    else:
+        carry = (h_init, acc_grads, zero_jacobians, acc_loss)
+        y_hats = []
+        for i in range(inputs.shape[0]):
+            carry, y_hat = forward_repack(carry, (inputs[i], targets[i]))
+            y_hats.append(y_hat)
 
-    # carry_out = (h_init, acc_grads, zero_jacobians, jacobian_state)
-    # losses = []
-    # for i in range(inputs.shape[0]):
-    #     carry_out, loss = f_repack(carry_out, (inputs[i], targets[i]))
-    #     losses.append(loss)
-    #
-    # losses = jnp.stack(losses)
+        y_hats = jnp.stack(y_hats)
+        carry_T = carry
 
     h_T, acc_grads, jacobians_T, acc_loss = carry_T
 
