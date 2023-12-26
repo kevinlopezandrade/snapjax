@@ -5,6 +5,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.experimental.sparse import BCOO, BCSR
 from jaxtyping import Array
+from numba import njit
+from numpy.typing import NDArray
 from scipy.sparse import coo_array, csc_array, csr_array
 
 from algos import sparse_multiplication
@@ -37,85 +39,77 @@ def sparse_preserving_product(A: Array, B: BCOO):
     return BCOO((data, indices), shape=B.shape)
 
 
-def sparse_preserving_product_scipy(
-    A: np.ndarray, B: csr_array, rows_indices: np.ndarray, col_indices: np.ndarray
-):
+@njit
+def spp_csr_matmul(
+    data: NDArray[np.float32],
+    cols: NDArray[np.int32],
+    indptr: NDArray[np.int32],
+    B: NDArray[np.float32],
+    sp: NDArray[np.int32],
+) -> NDArray[np.float32]:
     """
-    Its goint to compute B[rows_indices, :] @ A[:, col_indices], and return the data
-    as data for a COO array.
+    Performs a sparse preserving matrix multiplciation
+    between A(data, cols, indptr) @ B, where only
+    the entries of the sparse pattern are computed.
+
+    Args:
+        data: The data array of the csr format for matrix A.
+        cols: The cols array of the csr format for matrix A.
+        indptr: The row pointers of the csr format for matrix A.
+        B: The dense matrix B
+        sp: A 2D array where each row contains the indeces of the
+            non-zero entries of the sparse pattern.
+
+    Returns:
+        The data array to be used in the construction of a COO
+        matrix.
     """
-    N = rows_indices.shape[0]
-    res = np.empty(shape=(N,), dtype=np.float32)
+    N = sp.shape[0]
+    res = np.zeros(shape=(N,), dtype=np.float32)
 
-    for i in range(N):
-        row = rows_indices[i]
-        col = col_indices[i]
-        res[i] = B.getrow(row) @ A[:, col]
-
-    return res
-
-
-def new_sparse_preserving_product(
-    A: np.ndarray, B: csr_array, rows_indices: np.ndarray, col_indices: np.ndarray
-):
-    N = rows_indices.shape[0]
-    data = B.data
-    cols = B.indices
-    indptr = B.indptr
-
-    print((data.nbytes + cols.nbytes + indptr.nbytes) * 10e-6)
-
-    res = np.empty(shape=(N,), dtype=np.float32)
-
-    for n, (i, j) in enumerate(zip(rows_indices, col_indices)):
+    for n in range(N):
+        i, j = sp[n]
         row_start = indptr[i]
         row_end = indptr[i + 1]
-        row = data[row_start:row_end]
-        local_cols_indices = cols[row_start:row_end]
-        res[n] = np.dot(row, A[:, j][local_cols_indices])
+        if row_end - row_end == 0:
+            res[n] = 0
+        else:
+            row = data[row_start:row_end]
+            local_cols_indices = cols[row_start:row_end]
+            res[n] = np.dot(row, B[:, j][local_cols_indices])
 
     return res
 
 
-def dense_coo_product(D: np.ndarray, J: coo_array, new_algo: bool = False):
+def dense_coo_product(D: NDArray[np.float32], J: coo_array):
     """
-    Its goint to compute D & J keeping the same
-    sparsity pattern of J. The returned value is also
-    a COO array.
+    Its goint to compute D & J keeping the same sparsity pattern of J. The
+    returned value is also a COO array. Only works for rhs shape invariant
+    products. i.e (m, m)x(m, L) = (m, L)
 
-    Only works for rhs shape invariant products.
-    i.e (m, m)x(m, L) = (m, L)
-
-    The computation is done by actually tranposing the
-    product i.e:
-    D & J = C
-    J.T & D.T = C.T
-    and then we undo the transpose.
-    For this to be efficient we need J.T to be in
-    CSR format.
+    The computation is done by actually tranposing the product, D & J = C =>
+    J.T & D.T = C.T and then we undo the transpose. For this to be efficient we
+    need J.T to be in CSR format.
     """
-    J = J.transpose()
-    rows = J.row
-    cols = J.col
+    J = J.T
+    sp = np.stack((J.row, J.col), axis=1)
 
+    # To CSR
     J = J.tocsr()
     D = D.T
 
-    if new_algo:
-        data = new_sparse_preserving_product(D, J, rows, cols)
-    else:
-        data = sparse_preserving_product_scipy(D, J, rows, cols)
-    res = coo_array((data, (rows, cols)), shape=J.shape)
+    data = spp_csr_matmul(J.data, J.indices, J.indptr, D, sp)
+    res = coo_array((data, (sp[:, 0], sp[:, 1])), shape=J.shape)
 
-    return res.transpose()
+    return res.T
 
 
 if __name__ == "__main__":
-    N = 1500
+    N = 256
     J = create_test_jacobian(N, jax.random.PRNGKey(7))
 
     J_expanded = J.reshape(N, N * N)
-    D = jnp.arange(N * N).reshape(N, N)
+    D = jnp.arange(N * N).reshape(N, N).astype(jnp.float32)
     print(J_expanded.nbytes * 10e-6)
 
     print("Starting benchmark")
@@ -125,9 +119,12 @@ if __name__ == "__main__":
 
     J_np = np.array(J_expanded)
     J_np = coo_array(J_np)
-    D_np = np.array(D)
+    D_np = np.array(D, dtype=np.float32)
+
+    print("Test call to numba")
+    dense_coo_product(D_np, J_np)
 
     res_3 = timeit.timeit(
-        lambda: dense_coo_product(D_np, J_np, new_algo=True), number=number
+        lambda: dense_coo_product(D_np, J_np), number=number
     )
     print(res_3)
