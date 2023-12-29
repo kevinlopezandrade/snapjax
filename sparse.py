@@ -9,7 +9,7 @@ from numba import njit
 from numpy.typing import NDArray
 from scipy.sparse import coo_array, csc_array, csr_array
 
-from algos import sparse_multiplication
+from spp_primitives.primitives import spp_csr_matmul_jax
 
 
 def create_test_jacobian(n: int, key):
@@ -65,7 +65,7 @@ def spp_csr_matmul(
         matrix.
     """
     N = sp.shape[0]
-    res = np.zeros(shape=(N,), dtype=np.float32)
+    res = np.empty(shape=(N,), dtype=np.float32)
 
     for n in range(N):
         i, j = sp[n]
@@ -98,14 +98,27 @@ def dense_coo_product(D: NDArray[np.float32], J: coo_array):
     J = J.tocsr()
     D = D.T
 
-    data = spp_csr_matmul(J.data, J.indices, J.indptr, D, sp)
+    data = spp_csr_matmul_jax(J.data, J.indices, J.indptr, D, sp)
     res = coo_array((data, (sp[:, 0], sp[:, 1])), shape=J.shape)
 
     return res.T
 
 
+@jax.jit
+def dense_coo_product_jax(J: BCOO, D: Array):
+    J = J.transpose()
+    sp = J.indices
+
+    # TO CSR
+    J = BCSR.from_bcoo(J)
+    D = D.T
+    data = spp_csr_matmul_jax(J.data, J.indices, J.indptr, D, sp)
+
+    return BCOO((data, sp), shape=J.shape)
+
+
 if __name__ == "__main__":
-    N = 256
+    N = 400
     J = create_test_jacobian(N, jax.random.PRNGKey(7))
 
     J_expanded = J.reshape(N, N * N)
@@ -124,7 +137,14 @@ if __name__ == "__main__":
     print("Test call to numba")
     dense_coo_product(D_np, J_np)
 
+    res_2 = timeit.timeit(lambda: dense_coo_product(D_np, J_np), number=number)
+    print(res_2)
+
+    print("Test call to jax")
+    J_sp = BCOO.fromdense(J_expanded)
+    dense_coo_product_jax(J_sp, D)
+
     res_3 = timeit.timeit(
-        lambda: dense_coo_product(D_np, J_np), number=number
+        lambda: dense_coo_product_jax(J_sp, D).block_until_ready(), number=number
     )
     print(res_3)
