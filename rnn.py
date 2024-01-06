@@ -7,8 +7,8 @@ from jaxtyping import Array, Float32, PRNGKeyArray, PyTree, Scalar
 
 
 class RNN(eqx.Module):
-    weights_hh: Float32[Array, "n_hidden n_hidden"]
-    weights_ih: Float32[Array, "n_hidden input_dim"]
+    weights_hh: Float32[Array, "n_hidden*n_hidden"]
+    weights_ih: Float32[Array, "n_hidden*input_dim"]
     bias: Optional[Float32[Array, "n_hidden"]]
     input_size: int = eqx.field(static=True)
     hidden_size: int = eqx.field(static=True)
@@ -29,11 +29,11 @@ class RNN(eqx.Module):
 
         self.weights_hh = jax.random.uniform(
             hhkey, shape=(hidden_size, input_size), minval=-lim, maxval=lim
-        )
+        ).flatten()
 
         self.weights_ih = jax.random.uniform(
             ihkey, shape=(hidden_size, input_size), minval=-lim, maxval=lim
-        )
+        ).flatten()
 
         if use_bias:
             self.bias = jax.random.uniform(
@@ -46,7 +46,7 @@ class RNN(eqx.Module):
         self.input_size = input_size
         self.use_bias = use_bias
 
-    @jax.jit
+    # @jax.jit
     def f(
         self, h: Float32[Array, "hidden_size"], x: Float32[Array, "input_size"]
     ) -> Float32[Array, "hidden_size"]:
@@ -56,7 +56,10 @@ class RNN(eqx.Module):
         else:
             bias = 0
 
-        h_new = self.weights_hh @ jnp.tanh(h) + (self.weights_ih @ x) + bias
+        weights_hh = self.weights_hh.reshape(self.hidden_size, self.hidden_size)
+        weights_ih = self.weights_ih.reshape(self.hidden_size, self.input_size)
+
+        h_new = weights_hh @ jnp.tanh(h) + (weights_ih @ x) + bias
 
         return h_new
 
@@ -151,7 +154,7 @@ class StackedRNN(eqx.Module):
     ) -> Tuple[
         Float32[Array, "num_layers hidden_size"],
         Float32[Array, "hidden_size"],
-        List[Tuple[RNN, Array]]
+        List[Tuple[RNN, Array]],
     ]:
         print("Compiling call to StackedRNN.f")
         h_collect: List[Array] = []
