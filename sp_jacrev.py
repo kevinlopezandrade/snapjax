@@ -64,7 +64,32 @@ def _greedy_color(
     return coloring, onp.unique(coloring).size
 
 
-def flatten(fun, in_tree):
+def _expand_jacrev_jac(
+    compressed_jac: jnp.ndarray,
+    output_coloring: jnp.ndarray,
+    sparsity: jsparse.BCOO,
+) -> jsparse.BCOO:
+    """Expands an output-compressed Jacobian into a sparse matrix.
+
+    Args:
+        compressed_jac: The compressed Jacobian.
+        output_coloring: Coloring of the output elements.
+        sparsity: Sparse matrix whose specified elements are at locations where the
+            Jacobian is nonzero.
+
+    Returns:
+        The sparse Jacobian matrix.
+    """
+    assert compressed_jac.ndim == 2
+    assert output_coloring.ndim == 1
+    assert sparsity.shape == (output_coloring.size, compressed_jac.shape[1])
+    row, col = sparsity.indices.T
+    compressed_index = (output_coloring[row], col)
+    data = compressed_jac[compressed_index]
+    return jsparse.BCOO((data, sparsity.indices), shape=sparsity.shape)
+
+
+def flatten_function(fun, in_tree):
     def flat(*args):
         theta = jtu.tree_unflatten(in_tree, args)
         return fun(theta)
@@ -72,25 +97,26 @@ def flatten(fun, in_tree):
     return flat
 
 
-def new_vjp(fun, pytree_primal):
-    primals, in_tree = jtu.tree_flatten(pytree_primal)
-    flat_f = flatten(fun, in_tree)
+def tree_vjp(fun, primal_tree):
+    primals, in_tree = jtu.tree_flatten(primal_tree)
+    flat_f = flatten_function(fun, in_tree)
 
-    primals_vjp = []
-    for i in range(len(primals)):
+    N = len(primals)
+    primals_vjp = [None] * N
+    for i in range(N):
         f_partial, dyn_args = argnums_partial(
             wrap_init(flat_f),
-            dyn_argnums=(i,),
+            dyn_argnums=i,
             args=primals,
             require_static_args_hashable=False,
         )
         out, f_partial_vjp = _vjp(f_partial, *dyn_args)
-        primals_vjp.append(f_partial_vjp)
+        primals_vjp[i] = f_partial_vjp
 
     return jtu.tree_unflatten(in_tree, primals_vjp)
 
 
-def projection_matrices(sparse_patterns: RNN):
+def sp_projection_matrices(sparse_patterns: RNN):
     def _projection_matrix(sparsity: jsparse.BCOO):
         sparsity_scipy = ssparse.coo_matrix(
             (sparsity.data, sparsity.indices.T), shape=sparsity.shape
@@ -105,41 +131,35 @@ def projection_matrices(sparse_patterns: RNN):
         )
         projection_matrix = projection_matrix.astype(jnp.float32)
 
-        return projection_matrix
+        return projection_matrix, output_coloring, sparsity
 
     res = jtu.tree_map(
         lambda node: _projection_matrix(node),
         sparse_patterns,
-        is_leaf= lambda node: isinstance(node, jsparse.BCOO)
+        is_leaf=lambda node: isinstance(node, jsparse.BCOO),
     )
 
     return res
 
 
-theta = RNN(4, 4, use_bias=True, key=jax.random.PRNGKey(7))
-h = jnp.ones(4)
-x = jnp.ones(4)
-f = jtu.Partial(RNN.f, h=h, x=x)
+def apply_sp_pullback(pullback, cts_and_aux):
+    projection_matrix, output_coloring, sparsity = cts_and_aux
+    compressed_jacobian = jax.vmap(lambda ct: pullback(ct)[0])(projection_matrix)
+
+    return _expand_jacrev_jac(compressed_jacobian, output_coloring, sparsity)
 
 
-# Initial Overhead, for getting the sparse pattern.
-jacobian_func = jax.jacrev(f)
-res_orig = jacobian_func(theta)
-sparse_patterns = jtu.tree_map(
-    lambda node: jsparse.BCOO.fromdense(jnp.abs(node) > 0), res_orig
-)
+def sp_jacrev(fun, V):
+    def _sp_jacfun(primal_tree):
+        tree_pullback = tree_vjp(fun, primal_tree)
 
-V = projection_matrices(sparse_patterns)
+        tree_sp_jacobians = jtu.tree_map(
+            apply_sp_pullback,
+            tree_pullback,
+            V,
+            is_leaf=lambda node: isinstance(node, jtu.Partial),
+        )
 
-# Spare Jacobian Computation
-theta_vjp = new_vjp(f, theta)
+        return tree_sp_jacobians
 
-res = jtu.tree_map(
-    lambda f, x: jax.vmap(f)(x),
-    theta_vjp,
-    V,
-    is_leaf=lambda node: isinstance(node, jtu.Partial)
-)
-
-for leaf in jtu.tree_leaves(res):
-    print(leaf)
+    return _sp_jacfun
