@@ -46,7 +46,7 @@ class RNN(eqx.Module):
         self.input_size = input_size
         self.use_bias = use_bias
 
-    # @jax.jit
+    @jax.jit
     def f(
         self, h: Float32[Array, "hidden_size"], x: Float32[Array, "input_size"]
     ) -> Float32[Array, "hidden_size"]:
