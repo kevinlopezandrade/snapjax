@@ -11,8 +11,6 @@ from jax._src.api import _vjp
 from jax._src.api_util import argnums_partial
 from jax.extend.linear_util import wrap_init
 
-from rnn import RNN
-
 
 def _output_connectivity_from_sparsity(sparsity: ssparse.spmatrix) -> ssparse.spmatrix:
     """Computes the connectivity of output elements, given a Jacobian sparsity.
@@ -116,7 +114,7 @@ def tree_vjp(fun, primal_tree):
     return jtu.tree_unflatten(in_tree, primals_vjp)
 
 
-def sp_projection_matrices(sparse_patterns: RNN):
+def sp_projection_matrices(sparse_patterns):
     def _projection_matrix(sparsity: jsparse.BCOO):
         sparsity_scipy = ssparse.coo_matrix(
             (sparsity.data, sparsity.indices.T), shape=sparsity.shape
