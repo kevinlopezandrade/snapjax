@@ -145,6 +145,7 @@ def sp_projection_matrices(sparse_patterns: RNN):
 def apply_sp_pullback(pullback, cts_and_aux):
     projection_matrix, output_coloring, sparsity = cts_and_aux
     compressed_jacobian = jax.vmap(lambda ct: pullback(ct)[0])(projection_matrix)
+    compressed_jacobian = compressed_jacobian.reshape(compressed_jacobian.shape[0], -1)
 
     return _expand_jacrev_jac(compressed_jacobian, output_coloring, sparsity)
 
