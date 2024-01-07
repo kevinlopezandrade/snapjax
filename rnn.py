@@ -29,11 +29,11 @@ class RNN(eqx.Module):
 
         self.weights_hh = jax.random.uniform(
             hhkey, shape=(hidden_size, input_size), minval=-lim, maxval=lim
-        ).flatten()
+        )
 
         self.weights_ih = jax.random.uniform(
             ihkey, shape=(hidden_size, input_size), minval=-lim, maxval=lim
-        ).flatten()
+        )
 
         if use_bias:
             self.bias = jax.random.uniform(
@@ -56,8 +56,10 @@ class RNN(eqx.Module):
         else:
             bias = 0
 
-        weights_hh = self.weights_hh.reshape(self.hidden_size, self.hidden_size)
-        weights_ih = self.weights_ih.reshape(self.hidden_size, self.input_size)
+        # weights_hh = self.weights_hh.reshape(self.hidden_size, self.hidden_size)
+        # weights_ih = self.weights_ih.reshape(self.hidden_size, self.input_size)
+        weights_hh = self.weights_hh
+        weights_ih = self.weights_ih
 
         h_new = weights_hh @ jnp.tanh(h) + (weights_ih @ x) + bias
 
