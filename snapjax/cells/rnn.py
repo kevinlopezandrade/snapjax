@@ -7,8 +7,8 @@ import jax.tree_util as jtu
 from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray
 
-from snap.cells.base import RTRLCell, RTRLLayer, RTRLStacked
-from snap.sp_jacrev import sp_jacrev, sp_projection_matrices
+from snapjax.cells.base import RTRLCell, RTRLLayer, RTRLStacked
+from snapjax.sp_jacrev import sp_jacrev, sp_projection_matrices
 
 
 class RNN(RTRLCell):

@@ -8,9 +8,9 @@ from jax import config
 from jax.experimental.sparse import BCOO, BCSR
 from jaxtyping import Array
 
-from snap.cells.base import RTRLCell, RTRLLayer, RTRLStacked
-from snap.sp_jacrev import SparseProjection
-from snap.spp_primitives.primitives import spp_csr_matmul_jax
+from snapjax.cells.base import RTRLCell, RTRLLayer, RTRLStacked
+from snapjax.sp_jacrev import SparseProjection
+from snapjax.spp_primitives.primitives import spp_csr_matmul_jax
 
 config.update("jax_numpy_rank_promotion", "raise")
 
