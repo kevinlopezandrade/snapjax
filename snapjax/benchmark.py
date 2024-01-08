@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from algos import rtrl
 
-from snap.cells.rnn import StackedRNN
+from snapjax.cells.rnn import StackedRNN
 
 T = 100
 num_layers = 4

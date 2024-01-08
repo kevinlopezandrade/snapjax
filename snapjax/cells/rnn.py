@@ -180,7 +180,7 @@ class StackedRNN(RTRLStacked):
 
     def f(self, h_prev: Array, input: Array, perturbations: Array):
         print("Compiling call to StackedRNN.f")
-        h_collect: List[Array] = []
+        h_collect: List[Array] = [None] * self.num_layers
         inmediate_jacobians_collect = [None] * self.num_layers
         for i, cell in enumerate(self.layers):
             if self.sparse:
@@ -191,7 +191,7 @@ class StackedRNN(RTRLStacked):
             h_out, input, inmediate_jacobian, dynamics = f(
                 h_prev[i], input, perturbations[i]
             )
-            h_collect.append(h_out)
+            h_collect[i] = h_out
             inmediate_jacobians_collect[i] = (inmediate_jacobian, dynamics)
 
         h_new = jnp.stack(h_collect)
