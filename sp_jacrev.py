@@ -1,5 +1,6 @@
 from typing import Tuple
 
+import equinox as eqx
 import jax
 import jax.experimental.sparse as jsparse
 import jax.numpy as jnp
@@ -10,6 +11,7 @@ import scipy.sparse as ssparse
 from jax._src.api import _vjp
 from jax._src.api_util import argnums_partial
 from jax.extend.linear_util import wrap_init
+from jaxtyping import Array
 
 
 def _output_connectivity_from_sparsity(sparsity: ssparse.spmatrix) -> ssparse.spmatrix:
@@ -114,6 +116,12 @@ def tree_vjp(fun, primal_tree):
     return jtu.tree_unflatten(in_tree, primals_vjp)
 
 
+class SparseProjection(eqx.Module):
+    projection_matrix: Array
+    output_coloring: Array
+    sparsity: jsparse.BCOO
+
+
 def sp_projection_matrices(sparse_patterns):
     def _projection_matrix(sparsity: jsparse.BCOO):
         sparsity_scipy = ssparse.coo_matrix(
@@ -129,7 +137,7 @@ def sp_projection_matrices(sparse_patterns):
         )
         projection_matrix = projection_matrix.astype(jnp.float32)
 
-        return projection_matrix, output_coloring, sparsity
+        return SparseProjection(projection_matrix, output_coloring, sparsity)
 
     res = jtu.tree_map(
         lambda node: _projection_matrix(node),
@@ -140,12 +148,11 @@ def sp_projection_matrices(sparse_patterns):
     return res
 
 
-def apply_sp_pullback(pullback, cts_and_aux):
-    projection_matrix, output_coloring, sparsity = cts_and_aux
-    compressed_jacobian = jax.vmap(lambda ct: pullback(ct)[0])(projection_matrix)
+def apply_sp_pullback(pullback, sp: SparseProjection):
+    compressed_jacobian = jax.vmap(lambda ct: pullback(ct)[0])(sp.projection_matrix)
     compressed_jacobian = compressed_jacobian.reshape(compressed_jacobian.shape[0], -1)
 
-    return _expand_jacrev_jac(compressed_jacobian, output_coloring, sparsity)
+    return _expand_jacrev_jac(compressed_jacobian, sp.output_coloring, sp.sparsity)
 
 
 def sp_jacrev(fun, V):

@@ -3,22 +3,52 @@ from typing import Any, Callable, List, Tuple
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.tree_util as jtu
 from jax import config
+from jax.experimental.sparse import BCOO, BCSR
 from jaxtyping import Array
 
-from rnn import RNN, StackedRNN
+from snap.cells.base import RTRLCell, RTRLLayer, RTRLStacked
+from snap.sp_jacrev import SparseProjection
+from snap.spp_primitives.primitives import spp_csr_matmul_jax
 
 config.update("jax_numpy_rank_promotion", "raise")
 
 
 def is_rnn_cell(node: Any):
-    if isinstance(node, RNN):
+    if isinstance(node, RTRLCell):
         return True
     else:
         return False
 
 
-def make_zeros_jacobian(model: StackedRNN):
+@jax.jit
+def dense_coo_product_jax(D: Array, J: BCOO, sp: Array):
+    J = J.transpose()
+
+    # TO CSR
+    J = BCSR.from_bcoo(J)
+    D = D.T
+    data = spp_csr_matmul_jax(J.data, J.indices, J.indptr, D, sp)
+
+    return BCOO(
+        (data, sp), shape=J.shape, indices_sorted=True, unique_indices=True
+    ).transpose()
+
+
+@jax.jit
+def sparse_matching_addition(A: BCOO, B: BCOO) -> BCOO:
+    # Assumes A and B have the same sparsity
+    # pattern and that their indices are ordered. (Not strictly necessary)
+    # then addition is just adding the A.data + B.data
+    res = A.data + B.data
+
+    return BCOO(
+        (res, A.indices), indices_sorted=True, unique_indices=True, shape=A.shape
+    )
+
+
+def make_zeros_jacobian(model: RTRLStacked):
     def zeros_in_leaf(leaf):
         if eqx.is_array(leaf):
             return jnp.zeros(shape=(model.hidden_size, *leaf.shape))
@@ -30,7 +60,7 @@ def make_zeros_jacobian(model: StackedRNN):
     return zero_influences
 
 
-def make_zeros_grads(model: StackedRNN):
+def make_zeros_grads(model: RTRLStacked):
     def zeros_in_leaf(leaf):
         if eqx.is_array(leaf):
             return jnp.zeros(shape=leaf.shape)
@@ -43,8 +73,8 @@ def make_zeros_grads(model: StackedRNN):
 
 
 def step_loss(
-    model_spatial: StackedRNN,
-    model_rtrl: StackedRNN,
+    model_spatial: RTRLStacked,
+    model_rtrl: RTRLStacked,
     h_prev: Array,
     x_t: Array,
     perturbations: Array,
@@ -52,7 +82,7 @@ def step_loss(
 ):
     print("Compiling step_loss")
     model = eqx.combine(model_spatial, model_rtrl)
-    h_t, y_hat, inmediate_jacobians = model(h_prev, x_t, perturbations)
+    h_t, y_hat, inmediate_jacobians = model.f(h_prev, x_t, perturbations)
 
     diff = (y_t - y_hat) ** 2
 
@@ -73,37 +103,39 @@ def sparse_multiplication(D_t: Array, J_t_prev: Array):
 
 @eqx.filter_jit
 def update_cell_jacobians(
-    I_t: RNN,
+    I_t: RTRLCell,
     dynamics: Array,
-    J_t_prev: RNN,
+    J_t_prev: RTRLCell,
     matrix_product: Callable[[Array, Array], Array] = jnp.matmul,
     use_snap_1: bool = False,
 ):
     print("Compiling update_cell_jacobians")
     # RTRL
-    J_t = jax.tree_map(
-        lambda i_t, j_t_prev: i_t + matrix_product(dynamics, j_t_prev),
-        I_t,
-        J_t_prev,
-    )
-
     if use_snap_1:
-        mask = jax.tree_map(
-            lambda matrix: (jnp.abs(matrix) > 0.0).astype(jnp.float32),
-            I_t,
-        )
+        def _update_rtrl_bcco(i_t: BCOO, j_t_prev: BCOO) -> BCOO:
+            prod = dense_coo_product_jax(dynamics, j_t_prev, i_t.indices)
+            return sparse_matching_addition(i_t, prod)
 
-        # How efficient is to do this ?
-        # I could potentially do the spatial grads calculation taking
-        # into account something else.
-        J_t = jax.tree_map(lambda mask, j_t: mask * j_t, mask, J_t)
+        J_t = jax.tree_map(
+            lambda i_t, j_t_prev: _update_rtrl_bcco(i_t, j_t_prev),
+            I_t,
+            J_t_prev,
+            is_leaf=lambda node: isinstance(node, BCOO),
+        )
+    else:
+        J_t = jax.tree_map(
+            lambda i_t, j_t_prev: i_t + matrix_product(dynamics, j_t_prev),
+            I_t,
+            J_t_prev,
+            is_leaf=lambda node: isinstance(node, BCOO),
+        )
 
     return J_t
 
 
 def update_jacobians_rtrl(
-    jacobians_prev: StackedRNN,
-    inmediate_jacobians: List[Tuple[RNN, Array]],
+    jacobians_prev: RTRLStacked,
+    inmediate_jacobians: List[Tuple[RTRLCell, Array]],
     matrix_product: Callable[[Array, Array], Array] = jnp.matmul,
     use_snap_1: bool = False,
 ):
@@ -124,14 +156,16 @@ def update_jacobians_rtrl(
 
 
 def update_cells_grads(
-    grads: StackedRNN, hidden_states_grads: List[Array], jacobians: StackedRNN
+    grads: RTRLStacked, hidden_states_grads: List[Array], jacobians: RTRLStacked
 ):
     print("Compiling update_cells_grads")
     layers = grads.num_layers
     for i in range(layers):
         ht_grad = hidden_states_grads[i]
         cell_grads = jax.tree_map(
-            lambda jacobian: ht_grad @ jacobian, jacobians.layers[i].cell
+            lambda jacobian: ht_grad @ jacobian,
+            jacobians.layers[i].cell,
+            is_leaf=lambda node: isinstance(node, BCOO),
         )
         grads = eqx.tree_at(
             lambda grads: grads.layers[i].cell,
@@ -145,10 +179,10 @@ def update_cells_grads(
 
 # This should be a pure function.
 def forward_rtrl(
-    theta_spatial: StackedRNN,
-    theta_rtrl: StackedRNN,
-    acc_grads: StackedRNN,
-    jacobians_prev: StackedRNN,
+    theta_spatial: RTRLStacked,
+    theta_rtrl: RTRLStacked,
+    acc_grads: RTRLStacked,
+    jacobians_prev: RTRLStacked,
     h_prev: Array,
     input: Array,
     target: Array,
@@ -176,13 +210,18 @@ def forward_rtrl(
     )
 
     grads = update_cells_grads(spatial_grads, hidden_states_grads, jacobians)
-    acc_grads = jax.tree_map(lambda acc_grad, grad: acc_grad + grad, acc_grads, grads)
+
+    # Reshape is needed in the addition since I flattened the arrays
+    # to use the new primitive with a BCOO matrix of only 2 dimensions.
+    acc_grads = jax.tree_map(
+        lambda acc_grad, grad: acc_grad + grad.reshape(acc_grad.shape), acc_grads, grads
+    )
 
     return h_t, acc_grads, jacobians, loss_t, y_hat
 
 
 def rtrl(
-    model: StackedRNN,
+    model: RTRLStacked,
     inputs: Array,
     targets: Array,
     matrix_product: Callable[[Array, Array], Array] = jnp.matmul,
@@ -225,7 +264,7 @@ def rtrl(
 
     h_init = jnp.zeros(shape=(model.num_layers, model.hidden_size))
     acc_grads = make_zeros_grads(model)
-    zero_jacobians = make_zeros_jacobian(model_rtrl)
+    zero_jacobians = make_zeros_jacobian_bcco(model_rtrl)
     acc_loss = 0.0
 
     if use_scan:
@@ -249,7 +288,33 @@ def rtrl(
     return acc_loss, acc_grads, jacobians_T
 
 
-def forward_sequence(model: StackedRNN, inputs: Array):
+def make_zeros_jacobian_bcco(model: RTRLStacked):
+    zero_jacobians, _ = eqx.partition(
+        model,
+        lambda leaf: is_rnn_cell(leaf),
+        is_leaf=is_rnn_cell,
+    )
+
+    for i in range(model.num_layers):
+        sp_projection = model.layers[i].cell_sp_projection
+        zeros_jac = jtu.tree_map(
+            lambda sp: BCOO(
+                (jnp.zeros(sp.sparsity.data.shape[0]), sp.sparsity.indices),
+                shape=sp.sparsity.shape,
+                indices_sorted=True,
+                unique_indices=True,
+            ),
+            sp_projection,
+            is_leaf=lambda node: isinstance(node, SparseProjection),
+        )
+        zero_jacobians = eqx.tree_at(
+            lambda model: model.layers[i].cell, zero_jacobians, zeros_jac
+        )
+
+    return zero_jacobians
+
+
+def forward_sequence(model: RTRLStacked, inputs: Array):
     hidden_state = jnp.zeros(shape=(model.num_layers, model.hidden_size))
     perturbations = jnp.zeros(shape=(model.num_layers, model.hidden_size))
 
@@ -267,13 +332,13 @@ def forward_sequence(model: StackedRNN, inputs: Array):
     return out
 
 
-def loss_func(model: StackedRNN, inputs: Array, targets: Array):
+def loss_func(model: RTRLStacked, inputs: Array, targets: Array):
     pred = forward_sequence(model, inputs)
     errors = jnp.sum((pred - targets) ** 2, axis=1)
     return jnp.sum(errors)
 
 
-def bptt(model: StackedRNN, inputs: Array, targets: Array):
+def bptt(model: RTRLStacked, inputs: Array, targets: Array):
     loss, grads = eqx.filter_value_and_grad(loss_func)(model, inputs, targets)
 
     return loss, grads
