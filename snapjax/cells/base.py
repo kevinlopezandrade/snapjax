@@ -26,3 +26,8 @@ class RTRLStacked(eqx.Module):
     layers: eqx.AbstractVar[List[RTRLLayer]]
     num_layers: eqx.AbstractVar[int]
     hidden_size: eqx.AbstractVar[int]
+    sparse: eqx.AbstractVar[bool]
+
+    @abstractmethod
+    def f(self, *args) -> Any:
+        ...
