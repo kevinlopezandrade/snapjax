@@ -114,7 +114,6 @@ def step_loss(
     perturbations: Array,
     y_t: Array,
 ):
-    print("Compiling step_loss")
     model = eqx.combine(model_spatial, model_rtrl)
     h_t, y_hat, inmediate_jacobians = model.f(h_prev, x_t, perturbations)
 
@@ -130,7 +129,6 @@ def update_cell_jacobians(
     use_snap_1: bool = False,
     sparse: bool = False,
 ):
-    print("Compiling update_cell_jacobians")
     # RTRL
     if use_snap_1:
         if sparse:
@@ -174,7 +172,6 @@ def update_jacobians_rtrl(
     inmediate_jacobians: List[Tuple[RTRLCell, Array]],
     use_snap_1: bool = False,
 ):
-    print("Compiling update_jacobians_rtrl")
     # Jax will do loop unrolling here, but number of layers is not that big
     # so it will be fine.
     jacobians = jacobians_prev
@@ -196,8 +193,6 @@ def update_rtrl_cells_grads(
     hidden_states_grads: List[Array],
     jacobians: RTRLStacked,
 ):
-    print("Compiling update_cells_grads")
-
     def _leaf_function(sparse):
         if sparse:
             _is_leaf_func = lambda node: isinstance(node, BCOO)
@@ -279,7 +274,6 @@ def rtrl(
     use_scan: bool = True,
 ):
     def forward_repack(carry, data):
-        print("Compiling forward_repack")
         input, target = data
         h_prev, acc_grads, jacobians_prev, acc_loss = carry
 

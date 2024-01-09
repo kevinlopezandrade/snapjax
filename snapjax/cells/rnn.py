@@ -53,7 +53,6 @@ class RNN(RTRLCell):
 
     @jax.jit
     def f(self, h: Array, x: Array) -> Array:
-        print("Compiling call to RNN.f")
         if self.use_bias:
             bias = self.bias
         else:
@@ -109,7 +108,6 @@ class RNNLayer(RTRLLayer):
         """
         Returns h_(t), y_(t)
         """
-        print("Compiling call to RNNLayerRTRL.f")
         # To the RNN Cell
         h_out = self.cell.f(h_prev, input) + perturbation
 
@@ -179,7 +177,6 @@ class StackedRNN(RTRLStacked):
             self.layers.append(layer)
 
     def f(self, h_prev: Array, input: Array, perturbations: Array):
-        print("Compiling call to StackedRNN.f")
         h_collect: List[Array] = [None] * self.num_layers
         inmediate_jacobians_collect = [None] * self.num_layers
         for i, cell in enumerate(self.layers):

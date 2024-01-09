@@ -20,7 +20,8 @@ def get_stacked_rnn(num_layers: int, hidden_size: int, input_size: int, sparse: 
 
 
 def get_random_input_sequence(T: int, model: StackedRNN):
-    key = jrandom.PRNGKey(int(time.time() * 1000))
+    random_num = int(time.time() * 1000)
+    key = jrandom.PRNGKey(random_num)
     inputs = jrandom.normal(key, shape=(T, model.input_size), dtype=jnp.float32)
 
     return inputs
