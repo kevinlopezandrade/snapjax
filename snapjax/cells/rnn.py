@@ -162,7 +162,7 @@ class StackedRNN(RTRLStacked):
         hidden_size: int,
         input_size: int,
         use_bias: bool = True,
-        sparse: bool = True,
+        sparse: bool = False,
         *,
         key: PRNGKeyArray,
     ):

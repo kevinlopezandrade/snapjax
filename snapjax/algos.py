@@ -39,7 +39,7 @@ def dense_coo_product_jax(D: Array, J: BCOO, sp: Array):
 @jax.jit
 def sparse_matching_addition(A: BCOO, B: BCOO) -> BCOO:
     # Assumes A and B have the same sparsity
-    # pattern and that their indices are ordered. (Not strictly necessary)
+    # pattern and that their indices are ordered.
     # then addition is just adding the A.data + B.data
     res = A.data + B.data
 
@@ -60,8 +60,8 @@ def _make_zeros_jacobians_bcco(model: RTRLStacked):
             lambda sp: BCOO(
                 (jnp.zeros(sp.sparse_def.nse), sp.sparse_def.indices),
                 shape=sp.sparse_def.shape,
-                indices_sorted=True,
-                unique_indices=True,
+                indices_sorted=True, # This is guaranteed in if sparse_def
+                unique_indices=True, # is properly constructed.
             ),
             sp_projection,
             is_leaf=lambda node: isinstance(node, SparseProjection),
@@ -138,7 +138,7 @@ def update_cell_jacobians(
         if sparse:
 
             def _update_rtrl_bcco(i_t: BCOO, j_t_prev: BCOO) -> BCOO:
-                prod = dense_coo_product_jax(dynamics, j_t_prev, i_t.indices)
+                prod = dense_coo_product_jax(dynamics, j_t_prev, j_t_prev.indices)
                 return sparse_matching_addition(i_t, prod)
 
             J_t = jax.tree_map(
