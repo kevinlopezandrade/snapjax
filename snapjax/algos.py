@@ -106,6 +106,7 @@ def make_zeros_grads(model: RTRLStacked):
     return zero_grads
 
 
+@eqx.filter_jit
 def step_loss(
     model_spatial: RTRLStacked,
     model_rtrl: RTRLStacked,
@@ -133,38 +134,44 @@ def update_cell_jacobians(
 ):
     print("Compiling update_cell_jacobians")
     # RTRL
-    if not sparse:
-        J_t = jax.tree_map(
-            lambda i_t, j_t_prev: i_t + dynamics @ j_t_prev,
-            I_t,
-            J_t_prev,
-        )
-        if use_snap_1:
-            # The real and theoretical one.
+    if use_snap_1:
+        if sparse:
+
+            def _update_rtrl_bcco(i_t: BCOO, j_t_prev: BCOO) -> BCOO:
+                prod = dense_coo_product_jax(dynamics, j_t_prev, i_t.indices)
+                return sparse_matching_addition(i_t, prod)
+
+            J_t = jax.tree_map(
+                lambda i_t, j_t_prev: _update_rtrl_bcco(i_t, j_t_prev),
+                I_t,
+                J_t_prev,
+                is_leaf=lambda node: isinstance(node, BCOO),
+            )
+            return J_t
+        else:
+            # The theoretical one from the paper.
+            J_t = jax.tree_map(
+                lambda i_t, j_t_prev: i_t + dynamics @ j_t_prev,
+                I_t,
+                J_t_prev,
+            )
             mask = jax.tree_map(
                 lambda matrix: (jnp.abs(matrix) > 0.0).astype(jnp.float32),
                 I_t,
             )
             J_t = jax.tree_map(lambda mask, j_t: mask * j_t, mask, J_t)
             return J_t
-        else:
-            return J_t
-    else:
-        # Using sparse already implies using the snap-1 algorithm.
-        def _update_rtrl_bcco(i_t: BCOO, j_t_prev: BCOO) -> BCOO:
-            prod = dense_coo_product_jax(dynamics, j_t_prev, i_t.indices)
-            return sparse_matching_addition(i_t, prod)
 
+    else:
         J_t = jax.tree_map(
-            lambda i_t, j_t_prev: _update_rtrl_bcco(i_t, j_t_prev),
+            lambda i_t, j_t_prev: i_t + dynamics @ j_t_prev,
             I_t,
             J_t_prev,
-            is_leaf=lambda node: isinstance(node, BCOO),
         )
-
         return J_t
 
 
+@eqx.filter_jit
 def update_jacobians_rtrl(
     jacobians_prev: RTRLStacked,
     inmediate_jacobians: List[Tuple[RTRLCell, Array]],
@@ -187,6 +194,7 @@ def update_jacobians_rtrl(
     return jacobians
 
 
+@eqx.filter_jit
 def update_rtrl_cells_grads(
     grads: RTRLStacked,
     hidden_states_grads: List[Array],
@@ -275,7 +283,7 @@ def rtrl(
     inputs: Array,
     targets: Array,
     use_snap_1: bool = False,
-    sparse: bool = True,
+    sparse: bool = False,
     use_scan: bool = True,
 ):
     def forward_repack(carry, data):
