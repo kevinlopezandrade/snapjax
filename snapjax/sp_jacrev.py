@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Sequence, Tuple
 
 import equinox as eqx
 import jax
@@ -13,6 +13,16 @@ from jax._src.api_util import argnums_partial
 from jax.extend.linear_util import wrap_init
 from jaxtyping import Array
 
+class BCOOStructure(eqx.Module):
+    indices: Array
+    nse: Array
+    shape: Sequence[int]
+
+
+class SparseProjection(eqx.Module):
+    projection_matrix: Array
+    output_coloring: Array
+    sparse_def: BCOOStructure
 
 def _output_connectivity_from_sparsity(sparsity: ssparse.spmatrix) -> ssparse.spmatrix:
     """Computes the connectivity of output elements, given a Jacobian sparsity.
@@ -67,7 +77,7 @@ def _greedy_color(
 def _expand_jacrev_jac(
     compressed_jac: jnp.ndarray,
     output_coloring: jnp.ndarray,
-    sparsity: jsparse.BCOO,
+    sparsity: BCOOStructure,
 ) -> jsparse.BCOO:
     """Expands an output-compressed Jacobian into a sparse matrix.
 
@@ -116,10 +126,6 @@ def tree_vjp(fun, primal_tree):
     return jtu.tree_unflatten(in_tree, primals_vjp)
 
 
-class SparseProjection(eqx.Module):
-    projection_matrix: Array
-    output_coloring: Array
-    sparsity: jsparse.BCOO
 
 
 def sp_projection_matrices(sparse_patterns):
@@ -137,7 +143,12 @@ def sp_projection_matrices(sparse_patterns):
         )
         projection_matrix = projection_matrix.astype(jnp.float32)
 
-        return SparseProjection(projection_matrix, output_coloring, sparsity)
+        # We dont' need the data for the sparsity, only their structure.
+        # HACK: Create an appropiate data structure for this.
+        sparsity_structure = BCOOStructure(
+            sparsity.indices, sparsity.nse, sparsity.shape
+        )
+        return SparseProjection(projection_matrix, output_coloring, sparsity_structure)
 
     res = jtu.tree_map(
         lambda node: _projection_matrix(node),

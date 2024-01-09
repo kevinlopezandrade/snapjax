@@ -58,8 +58,8 @@ def _make_zeros_jacobians_bcco(model: RTRLStacked):
         sp_projection = model.layers[i].cell_sp_projection
         zeros_jac = jtu.tree_map(
             lambda sp: BCOO(
-                (jnp.zeros(sp.sparsity.data.shape), sp.sparsity.indices),
-                shape=sp.sparsity.shape,
+                (jnp.zeros(sp.sparse_def.nse), sp.sparse_def.indices),
+                shape=sp.sparse_def.shape,
                 indices_sorted=True,
                 unique_indices=True,
             ),
