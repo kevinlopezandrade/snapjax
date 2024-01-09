@@ -163,7 +163,7 @@ def apply_sp_pullback(pullback, sp: SparseProjection):
     compressed_jacobian = jax.vmap(lambda ct: pullback(ct)[0])(sp.projection_matrix)
     compressed_jacobian = compressed_jacobian.reshape(compressed_jacobian.shape[0], -1)
 
-    return _expand_jacrev_jac(compressed_jacobian, sp.output_coloring, sp.sparsity)
+    return _expand_jacrev_jac(compressed_jacobian, sp.output_coloring, sp.sparse_def)
 
 
 def sp_jacrev(fun, V):

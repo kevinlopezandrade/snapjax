@@ -204,9 +204,10 @@ def update_rtrl_cells_grads(
 
     for i in range(grads.num_layers):
         ht_grad = hidden_states_grads[i]
+        rtrl_cell_jac = jacobians.layers[i].cell
         rtrl_cell_grads = jax.tree_map(
             lambda jacobian: ht_grad @ jacobian,
-            jacobians.layers[i].cell,
+            rtrl_cell_jac,
             is_leaf=_leaf_function(sparse),
         )
         grads = eqx.tree_at(
@@ -221,8 +222,7 @@ def update_rtrl_cells_grads(
 
 # This should be a pure function.
 def forward_rtrl(
-    theta_spatial: RTRLStacked,
-    theta_rtrl: RTRLStacked,
+    model: RTRLStacked,
     acc_grads: RTRLStacked,
     jacobians_prev: RTRLStacked,
     h_prev: Array,
@@ -232,6 +232,11 @@ def forward_rtrl(
     sparse: bool = False,
 ):
     print("Compiling forward_rtrl")
+    theta_rtrl, theta_spatial = eqx.partition(
+        model,
+        lambda leaf: is_rtrl_cell(leaf),
+        is_leaf=is_rtrl_cell,
+    )
     step_loss_and_grad = jax.value_and_grad(step_loss, argnums=(0, 4), has_aux=True)
     perturbations = jnp.zeros(shape=(theta_rtrl.num_layers, theta_rtrl.hidden_size))
 
@@ -273,20 +278,13 @@ def rtrl(
     sparse: bool = True,
     use_scan: bool = True,
 ):
-    model_rtrl, model_spatial = eqx.partition(
-        model,
-        lambda leaf: is_rtrl_cell(leaf),
-        is_leaf=is_rtrl_cell,
-    )
-
     def forward_repack(carry, data):
         print("Compiling forward_repack")
         input, target = data
         h_prev, acc_grads, jacobians_prev, acc_loss = carry
 
         out = forward_rtrl(
-            model_spatial,
-            model_rtrl,
+            model,
             acc_grads,
             jacobians_prev,
             h_prev,
