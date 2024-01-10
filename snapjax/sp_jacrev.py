@@ -1,5 +1,6 @@
-from typing import Tuple
+from typing import Callable, Sequence, Tuple
 
+import equinox as eqx
 import jax
 import jax.experimental.sparse as jsparse
 import jax.numpy as jnp
@@ -10,6 +11,19 @@ import scipy.sparse as ssparse
 from jax._src.api import _vjp
 from jax._src.api_util import argnums_partial
 from jax.extend.linear_util import wrap_init
+from jaxtyping import Array, PyTree
+
+
+class BCOOStructure(eqx.Module):
+    indices: Array
+    nse: Array
+    shape: Sequence[int]
+
+
+class SparseProjection(eqx.Module):
+    projection_matrix: Array
+    output_coloring: Array
+    sparse_def: BCOOStructure
 
 
 def _output_connectivity_from_sparsity(sparsity: ssparse.spmatrix) -> ssparse.spmatrix:
@@ -65,7 +79,7 @@ def _greedy_color(
 def _expand_jacrev_jac(
     compressed_jac: jnp.ndarray,
     output_coloring: jnp.ndarray,
-    sparsity: jsparse.BCOO,
+    sparsity: BCOOStructure,
 ) -> jsparse.BCOO:
     """Expands an output-compressed Jacobian into a sparse matrix.
 
@@ -88,6 +102,13 @@ def _expand_jacrev_jac(
 
 
 def flatten_function(fun, in_tree):
+    """
+    Given a function 'fun' which takes a PyTree creates
+    another function that will compute 'fun' but on
+    a flattened pytree. The jax.core contains a similar
+    utility, but much more involved for their purposes.
+    """
+
     def flat(*args):
         theta = jtu.tree_unflatten(in_tree, args)
         return fun(theta)
@@ -95,7 +116,19 @@ def flatten_function(fun, in_tree):
     return flat
 
 
-def tree_vjp(fun, primal_tree):
+def tree_vjp(fun, primal_tree: PyTree) -> PyTree:
+    """
+    Takes a function 'fun' which has only one positional
+    argument, which is a PyTree, and returns a PyTree
+    with the same structure that for each leafs contains
+    the pullback 'vjp' evaluated at the corresponding leaf.
+
+    Args:
+        fun: Function that takes only one positional
+            argument which is a PyTree.
+        primal_tree: PyTree with the primal values for each
+            vjp in the returned PyTree.
+    """
     primals, in_tree = jtu.tree_flatten(primal_tree)
     flat_f = flatten_function(fun, in_tree)
 
@@ -114,7 +147,15 @@ def tree_vjp(fun, primal_tree):
     return jtu.tree_unflatten(in_tree, primals_vjp)
 
 
-def sp_projection_matrices(sparse_patterns):
+def sp_projection_matrices(sparse_patterns: PyTree) -> PyTree:
+    """
+    Given a PyTree with sparse_patterns in BCOO format, it computes per leaf
+    the structural orthogonal rows using a graph coloring algorithm, and the
+    projection matrix used for computing sparse jacobians. It then
+    returns a PyTree with the same structure where each leaf contains
+    a SparseProjection needed for the computation of sparse jacobians.
+    """
+
     def _projection_matrix(sparsity: jsparse.BCOO):
         sparsity_scipy = ssparse.coo_matrix(
             (sparsity.data, sparsity.indices.T), shape=sparsity.shape
@@ -129,7 +170,12 @@ def sp_projection_matrices(sparse_patterns):
         )
         projection_matrix = projection_matrix.astype(jnp.float32)
 
-        return projection_matrix, output_coloring, sparsity
+        # We dont' need the data for the sparsity, only their structure.
+        # HACK: Create an appropiate data structure for this.
+        sparsity_structure = BCOOStructure(
+            sparsity.indices, sparsity.nse, sparsity.shape
+        )
+        return SparseProjection(projection_matrix, output_coloring, sparsity_structure)
 
     res = jtu.tree_map(
         lambda node: _projection_matrix(node),
@@ -140,15 +186,36 @@ def sp_projection_matrices(sparse_patterns):
     return res
 
 
-def apply_sp_pullback(pullback, cts_and_aux):
-    projection_matrix, output_coloring, sparsity = cts_and_aux
-    compressed_jacobian = jax.vmap(lambda ct: pullback(ct)[0])(projection_matrix)
+def apply_sp_pullback(pullback, sp: SparseProjection):
+    """
+    Computes the sparse jacobian using the projection matrix using
+    the pullback (jvp).
+
+    Args:
+        pullback: vjp function to use.
+        sp: Projection matrix to vmap over.
+    """
+    compressed_jacobian = jax.vmap(lambda ct: pullback(ct)[0])(sp.projection_matrix)
+    # Reshape is needed since the sparse patterns are only 2d dimensional. But the jvp
+    # returns 3d arrays.
     compressed_jacobian = compressed_jacobian.reshape(compressed_jacobian.shape[0], -1)
 
-    return _expand_jacrev_jac(compressed_jacobian, output_coloring, sparsity)
+    return _expand_jacrev_jac(compressed_jacobian, sp.output_coloring, sp.sparse_def)
 
 
-def sp_jacrev(fun, V):
+def sp_jacrev(fun: Callable[[PyTree], PyTree], V: PyTree) -> PyTree:
+    """
+    Retruns a function that will compute the jacobian of fun w.r.t
+    to its first positional argument, making use of the sparsity
+    structure of V.
+
+    Args:
+        fun: Function to use for computing the sparse jacobian.
+        V: PyTree with the same structure as the input pytree
+            of fun. Each leaf of the PyTree must be a SparseProjection
+            leaf.
+    """
+
     def _sp_jacfun(primal_tree):
         tree_pullback = tree_vjp(fun, primal_tree)
 

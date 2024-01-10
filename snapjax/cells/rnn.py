@@ -1,15 +1,20 @@
-from typing import Any, List, Optional, Tuple, cast
+from typing import List, Tuple
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float32, PRNGKeyArray, PyTree, Scalar
+import jax.tree_util as jtu
+from jax.experimental.sparse import BCOO
+from jaxtyping import Array, PRNGKeyArray
+
+from snapjax.cells.base import RTRLCell, RTRLLayer, RTRLStacked
+from snapjax.sp_jacrev import sp_jacrev, sp_projection_matrices
 
 
-class RNN(eqx.Module):
-    weights_hh: Float32[Array, "n_hidden*n_hidden"]
-    weights_ih: Float32[Array, "n_hidden*input_dim"]
-    bias: Optional[Float32[Array, "n_hidden"]]
+class RNN(RTRLCell):
+    weights_hh: Array
+    weights_ih: Array
+    bias: Array
     input_size: int = eqx.field(static=True)
     hidden_size: int = eqx.field(static=True)
     use_bias: bool = eqx.field(static=True)
@@ -47,17 +52,11 @@ class RNN(eqx.Module):
         self.use_bias = use_bias
 
     @jax.jit
-    def f(
-        self, h: Float32[Array, "hidden_size"], x: Float32[Array, "input_size"]
-    ) -> Float32[Array, "hidden_size"]:
-        print("Compiling call to RNN.f")
+    def f(self, h: Array, x: Array) -> Array:
         if self.use_bias:
             bias = self.bias
         else:
             bias = 0
-
-        # weights_hh = self.weights_hh.reshape(self.hidden_size, self.hidden_size)
-        # weights_ih = self.weights_ih.reshape(self.hidden_size, self.input_size)
         weights_hh = self.weights_hh
         weights_ih = self.weights_ih
 
@@ -65,46 +64,52 @@ class RNN(eqx.Module):
 
         return h_new
 
-    def __call__(
-        self, h: Float32[Array, "hidden_size"], x: Float32[Array, "input_size"]
-    ) -> Float32[Array, "hidden_size"]:
-        print("Compiling call to RNN.__call__")
-        return self.f(h, x)
+
+def _get_sp_rnn(cell: RNN):
+    h = jnp.ones(cell.hidden_size)
+    x = jnp.ones(cell.input_size)
+
+    jacobian_fun = jax.jacrev(RNN.f, argnums=0)
+    jacobian = jacobian_fun(cell, h, x)
+
+    sp = jtu.tree_map(
+        lambda mat: BCOO.fromdense(jnp.abs(mat.reshape(mat.shape[0], -1)) > 0), jacobian
+    )
+
+    return sp
 
 
-def zero_influence_pytree(cell: RNN) -> RNN:
-    def zeros_jacobian(leaf):
-        return jnp.zeros(shape=(cell.hidden_size, *leaf.shape))
-
-    return jax.tree_map(zeros_jacobian, cell)
-
-
-class RNNLayerRTRL(eqx.Module):
+class RNNLayer(RTRLLayer):
     cell: RNN
     C: eqx.nn.Linear
     D: eqx.nn.Linear
+    cell_sp_projection: RNN = eqx.field(static=True)
 
     def __init__(
-        self, hidden_size: int, input_size: int, use_bias: bool, key: PRNGKeyArray
+        self,
+        hidden_size: int,
+        input_size: int,
+        use_bias: bool = True,
+        *,
+        key: PRNGKeyArray,
     ):
         cell_key, c_key, d_key = jax.random.split(key, 3)
         self.cell = RNN(hidden_size, input_size, use_bias=use_bias, key=cell_key)
+        self.cell_sp_projection = sp_projection_matrices(_get_sp_rnn(self.cell))
         self.C = eqx.nn.Linear(hidden_size, hidden_size, use_bias=False, key=c_key)
         self.D = eqx.nn.Linear(hidden_size, input_size, use_bias=False, key=d_key)
 
-    @eqx.filter_jit
-    def __call__(
+    def f(
         self,
-        h_prev: Float32[Array, "ndim"],
-        input: Float32[Array, "ndim"],
-        perturbation: Float32[Array, "ndim"],
-    ):
+        h_prev: Array,
+        input: Array,
+        perturbation: Array,
+    ) -> Tuple[Array, Array, RNN, Array]:
         """
         Returns h_(t), y_(t)
         """
-        print("Compiling call to RNNLayerRTRL.__call__")
         # To the RNN Cell
-        h_out = self.cell(h_prev, input) + perturbation
+        h_out = self.cell.f(h_prev, input) + perturbation
 
         # Compute Jacobian and dynamics
         jacobian_func = jax.jit(jax.jacrev(RNN.f, argnums=(0, 1)))
@@ -115,68 +120,77 @@ class RNNLayerRTRL(eqx.Module):
 
         return h_out, y_out, inmediate_jacobian, dynamics
 
+    def f_sp(
+        self, h_prev: Array, input: Array, perturbation: Array
+    ) -> Tuple[Array, Array, RNN, Array]:
+        # To the RNN Cell
+        h_out = self.cell.f(h_prev, input) + perturbation
 
-class StackedRNN(eqx.Module):
+        # Compute Jacobian in sparse format.
+        sp_jacobian_fun = sp_jacrev(
+            jtu.Partial(RNN.f, h=h_prev, x=input), self.cell_sp_projection
+        )
+        sp_inmediate_jacobian = sp_jacobian_fun(self.cell)
+
+        # Compute dynamics
+        dynamics_fun = jax.jacrev(RNN.f, argnums=1)
+        dynamics = dynamics_fun(self.cell, h_prev, input)
+
+        # Project out
+        y_out = self.C(jnp.tanh(h_out)) + self.D(input)
+
+        return h_out, y_out, sp_inmediate_jacobian, dynamics
+
+
+class StackedRNN(RTRLStacked):
     """
     It acts as a unique cell.
     """
 
-    layers: List[RNNLayerRTRL]
+    layers: List[RNNLayer]
     num_layers: int = eqx.field(static=True)
     hidden_size: int = eqx.field(static=True)
     input_size: int = eqx.field(static=True)
     use_bias: bool = eqx.field(static=True)
+    sparse: bool = eqx.field(static=True)
 
     def __init__(
         self,
-        key: PRNGKeyArray,
         num_layers: int,
         hidden_size: int,
         input_size: int,
         use_bias: bool = True,
+        sparse: bool = False,
+        *,
+        key: PRNGKeyArray,
     ):
         self.num_layers = num_layers
         self.hidden_size = hidden_size
         self.input_size = input_size
         self.use_bias = use_bias
+        self.sparse = sparse
 
         self.layers = []
         keys = jax.random.split(key, num=num_layers)
         for i in range(num_layers):
-            layer = RNNLayerRTRL(
-                hidden_size, hidden_size, use_bias=use_bias, key=keys[i]
-            )
+            layer = RNNLayer(hidden_size, hidden_size, use_bias=use_bias, key=keys[i])
             self.layers.append(layer)
 
-    def f(
-        self,
-        h_prev: Float32[Array, "num_layers hidden_size"],
-        input: Float32[Array, "ndim"],
-        perturbations: Float32[Array, "num_layers hidden_size"],
-    ) -> Tuple[
-        Float32[Array, "num_layers hidden_size"],
-        Float32[Array, "hidden_size"],
-        List[Tuple[RNN, Array]],
-    ]:
-        print("Compiling call to StackedRNN.f")
-        h_collect: List[Array] = []
-        inmediate_jacobians_collect = []
+    def f(self, h_prev: Array, input: Array, perturbations: Array):
+        h_collect: List[Array] = [None] * self.num_layers
+        inmediate_jacobians_collect = [None] * self.num_layers
         for i, cell in enumerate(self.layers):
-            h_out, input, inmediate_jacobian, dynamics = cell(
+            if self.sparse:
+                f = cell.f_sp
+            else:
+                f = cell.f
+
+            h_out, input, inmediate_jacobian, dynamics = f(
                 h_prev[i], input, perturbations[i]
             )
-            h_collect.append(h_out)
-            inmediate_jacobians_collect.append((inmediate_jacobian, dynamics))
+            h_collect[i] = h_out
+            inmediate_jacobians_collect[i] = (inmediate_jacobian, dynamics)
 
         h_new = jnp.stack(h_collect)
 
         return h_new, input, inmediate_jacobians_collect
-
-    def __call__(
-        self,
-        h_prev: Float32[Array, "num_layers hidden_size"],
-        input: Float32[Array, "ndim"],
-        perturbations: Float32[Array, "num_layers hidden_size"],
-    ):
-        print("Compiling call to StackedRNN.__call__")
-        return self.f(h_prev, input, perturbations)

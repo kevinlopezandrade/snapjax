@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "snapjax"
+version = "0.0.1"
+description = "Practical Real Time Recurrent Learning with a Sparse Approximation"
+authors = ["Kevin Lopez <kevinlo@ethz.ch>"]
+
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+jax = { version = "^0.4.23", extras = ["cpu"] }
+numba = "^0.58.1"
+equinox = "^0.11.2"
+jaxtyping = "^0.2.25"
+networkx = "^3.2.1"
+
+[tool.isort]
+profile = "black"
