@@ -1,4 +1,5 @@
-from typing import Any, Callable, List, Tuple, cast
+from functools import partial
+from typing import Any, List, Tuple, cast
 
 import equinox as eqx
 import jax
@@ -106,6 +107,7 @@ def make_zeros_grads(model: RTRLStacked):
     return zero_grads
 
 
+@jax.jit
 def step_loss(
     model_spatial: RTRLStacked,
     model_rtrl: RTRLStacked,
@@ -122,6 +124,7 @@ def step_loss(
     return jnp.sum(diff), (h_t, y_hat, inmediate_jacobians)
 
 
+@partial(jax.jit, static_argnums=(3, 4))
 def update_cell_jacobians(
     I_t: RTRLCell,
     dynamics: Array,
@@ -167,6 +170,7 @@ def update_cell_jacobians(
         return J_t
 
 
+@partial(jax.jit, static_argnums=(2))
 def update_jacobians_rtrl(
     jacobians_prev: RTRLStacked,
     inmediate_jacobians: List[Tuple[RTRLCell, Array]],
@@ -188,6 +192,7 @@ def update_jacobians_rtrl(
     return jacobians
 
 
+@jax.jit
 def update_rtrl_cells_grads(
     grads: RTRLStacked,
     hidden_states_grads: List[Array],

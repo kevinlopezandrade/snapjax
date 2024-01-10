@@ -1,6 +1,5 @@
 from typing import Callable, Sequence, Tuple
 
-import equinox as eqx
 import jax
 import jax.experimental.sparse as jsparse
 import jax.numpy as jnp
@@ -14,22 +13,50 @@ from jax.extend.linear_util import wrap_init
 from jaxtyping import Array, PyTree
 
 
-class BCOOStructure(eqx.Module):
-    indices: Array
-    nse: Array
-    shape: Sequence[int]
+class BCOOStructure:
+    def __init__(self, indices: Array, nse: int, shape: Sequence[int]):
+        self._indices = indices
+        self._nse = nse
+        self._shape = shape
+
+    @property
+    def indices(self):
+        return self._indices
+
+    @property
+    def nse(self):
+        return self._nse
+
+    @property
+    def shape(self):
+        return self._shape
 
 
-class SparseProjection(eqx.Module):
-    projection_matrix: Array
-    output_coloring: Array
-    sparse_def: BCOOStructure
+# NOTE: I wrap inside a normal python class, insteaf of eqx.Module or a
+# dataclass since I'm using this as part of the static values of a PyTree and
+# not as their leafs. Therefore for not triggering recompilation errors.
+class SparseProjection:
+    def __init__(
+        self,
+        projection_matrix: Array,
+        output_coloring: Array,
+        sparse_def: BCOOStructure,
+    ) -> None:
+        self._projection_matrix = projection_matrix
+        self._output_coloring = output_coloring
+        self._sparse_def = sparse_def
 
+    @property
+    def projection_matrix(self):
+        return self._projection_matrix
 
-# TODO: The following functions: _output_connectivity_from_sparsity,
-# _input_connectivity_from_sparsity, _greedy_color, _expand_jacrev_jac were
-# taken from https://github.com/mfschubert/sparsejac. Ideally I should submit a
-# pull request.
+    @property
+    def output_coloring(self):
+        return self._output_coloring
+
+    @property
+    def sparse_def(self):
+        return self._sparse_def
 
 
 def _output_connectivity_from_sparsity(sparsity: ssparse.spmatrix) -> ssparse.spmatrix:
