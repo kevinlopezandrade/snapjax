@@ -29,12 +29,27 @@ def get_stacked_rnn(
     return theta
 
 
-def get_random_input_sequence(T: int, model: StackedRNN, seed: int | None = None):
+def get_random_sequence(T: int, model: StackedRNN, seed: int | None = None):
     if seed is None:
-        random_num = int(time.time() * 1000)
+        key = int(time.time() * 1000)
     else:
-        random_num = seed
-    key = jrandom.PRNGKey(random_num)
-    inputs = jrandom.normal(key, shape=(T, model.input_size), dtype=jnp.float32)
+        key = seed
+
+    inputs = jrandom.normal(
+        jrandom.PRNGKey(key), shape=(T, model.input_size), dtype=jnp.float32
+    )
 
     return inputs
+
+
+def get_random_batch(N: int, T: int, model: StackedRNN, seed: int | None = None):
+    if seed is None:
+        key = int(time.time() * 1000)
+    else:
+        key = seed
+
+    batch_inputs = jrandom.normal(
+        jrandom.PRNGKey(key), shape=(N, T, model.input_size), dtype=jnp.float32
+    )
+
+    return batch_inputs

@@ -2,14 +2,15 @@ import ctypes
 from ctypes import pythonapi
 from functools import partial
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 from jax import core
-from jax.interpreters import mlir, xla
+from jax.interpreters import batching, mlir, xla
 from jax.interpreters.mlir import ir
 from jax.lib import xla_client
 from numba import carray, cfunc, types
 from numpy.typing import NDArray
-import jax.numpy as jnp
 
 """
 The new primitive works as follows. It takes an CSR matrix,
@@ -224,3 +225,36 @@ def _spp_csr_matmul_lowering(ctx, data, cols, indptr, RHS, sp):
 
 
 mlir.register_lowering(spp_csr_matmul_p, _spp_csr_matmul_lowering, platform="cpu")
+
+# Batching
+
+# Jax will do loop unrolling here since spp_csr_matmul_batch must be traceable
+# unless I make my primitive closed under batching for which I should code a
+# bit more, it should not be that hard though. Just need to spend time in Numba
+# for the CPU lowering and in CUDA for the GPU. In the mean time just do loop
+# unrolling. The loop unrolling done here will be equal to the size of the
+# batch.
+
+
+def spp_csr_matmul_batch(args, batch_axes):
+    data, cols, indptr, RHS, sp = args
+
+    if data.ndim == 1:
+        # Then I'm batching only over RHS
+        data_batched = [
+            spp_csr_matmul_jax(data, cols, indptr, RHS[i], sp)
+            for i in range(RHS.shape[0])
+        ]
+        data_batched = jnp.stack(data_batched)
+        return data_batched, 0
+    if data.ndim == 2:
+        # Then I'm batching over data and RHS.
+        data_batched = [
+            spp_csr_matmul_jax(data[i], cols, indptr, RHS[i], sp)
+            for i in range(data.shape[0])
+        ]
+        data_batched = jnp.stack(data_batched)
+        return data_batched, 0
+
+
+batching.primitive_batchers[spp_csr_matmul_p] = spp_csr_matmul_batch

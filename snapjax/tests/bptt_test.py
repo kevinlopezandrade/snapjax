@@ -1,7 +1,7 @@
 import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from utils import get_random_input_sequence, get_stacked_rnn
+from utils import get_random_sequence, get_stacked_rnn
 
 from snapjax.algos import bptt, rtrl
 
@@ -16,8 +16,8 @@ def test_no_snap_one_layer():
     """
     T = 50
     model = get_stacked_rnn(1, 256, 256, sparse=False)
-    inputs = get_random_input_sequence(T, model)
-    targets = get_random_input_sequence(T, model)
+    inputs = get_random_sequence(T, model)
+    targets = get_random_sequence(T, model)
 
     loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=False)
     loss_bptt, acc_grads_bptt = bptt(model, inputs, targets, use_scan=False)
@@ -47,8 +47,8 @@ def test_no_snap_mutliple_layers():
     """
     T = 50
     model = get_stacked_rnn(4, 10, 10, sparse=False)
-    inputs = get_random_input_sequence(T, model)
-    targets = get_random_input_sequence(T, model)
+    inputs = get_random_sequence(T, model)
+    targets = get_random_sequence(T, model)
 
     loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=False)
     loss_bptt, acc_grads_bptt = bptt(model, inputs, targets)
@@ -77,8 +77,8 @@ def test_no_snap_mutliple_layers():
 def test_scan_unrolled():
     T = 50
     model = get_stacked_rnn(4, 10, 10, sparse=False)
-    inputs = get_random_input_sequence(T, model)
-    targets = get_random_input_sequence(T, model)
+    inputs = get_random_sequence(T, model)
+    targets = get_random_sequence(T, model)
 
     loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=True)
     loss_no_scan, acc_grads_no_scan, _ = rtrl(

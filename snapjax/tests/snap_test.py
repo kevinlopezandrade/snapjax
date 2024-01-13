@@ -1,7 +1,7 @@
 import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from utils import get_random_input_sequence, get_stacked_rnn
+from utils import get_random_sequence, get_stacked_rnn
 
 from snapjax.algos import rtrl
 
@@ -14,8 +14,8 @@ def test_jacobians():
     model = get_stacked_rnn(4, 20, 20, sparse=True, seed=7)
     model_no_sp = get_stacked_rnn(4, 20, 20, sparse=False, seed=7)
 
-    inputs = get_random_input_sequence(T, model)
-    targets = get_random_input_sequence(T, model)
+    inputs = get_random_sequence(T, model)
+    targets = get_random_sequence(T, model)
 
     loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=True, use_scan=False)
     loss_no_sp, acc_grads_no_sp, _ = rtrl(
