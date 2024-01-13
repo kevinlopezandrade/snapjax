@@ -25,16 +25,20 @@ def is_rtrl_cell(node: Any):
 
 @jax.jit
 def dense_coo_product_jax(D: Array, J: BCOO, sp: Array):
+    orig_shape = J.shape
     J = J.transpose()
 
     # TO CSR
     J = BCSR.from_bcoo(J)
     D = D.T
-    data = spp_csr_matmul_jax(J.data, J.indices, J.indptr, D, sp)
+    # Transpose also the sparsity pattern.
+    sp_T = sp.at[:, 0].set(sp[:, 1])
+    sp_T = sp_T.at[:, 1].set(sp[:, 0])
 
-    return BCOO(
-        (data, sp), shape=J.shape, indices_sorted=True, unique_indices=True
-    ).transpose()
+    data = spp_csr_matmul_jax(J.data, J.indices, J.indptr, D, sp_T)
+
+    # No need to do the transpose since, sp is already in the shape we want.
+    return BCOO((data, sp), shape=orig_shape, indices_sorted=True, unique_indices=True)
 
 
 @jax.jit
@@ -124,6 +128,20 @@ def step_loss(
     return jnp.sum(diff), (h_t, y_hat, inmediate_jacobians)
 
 
+@jax.jit
+def mask_by_it(i_t: BCOO, j_t: BCOO):
+    mask = (jnp.abs(i_t.data) > 0.0).astype(jnp.float32)
+
+    # It does introduce explicit zeros in the BCOO
+    # but is fine for our puposes.
+    return BCOO(
+        (j_t.data * mask, j_t.indices),
+        shape=j_t.shape,
+        indices_sorted=True,
+        unique_indices=True,
+    )
+
+
 @partial(jax.jit, static_argnums=(3, 4))
 def update_cell_jacobians(
     I_t: RTRLCell,
@@ -141,7 +159,7 @@ def update_cell_jacobians(
                 return sparse_matching_addition(i_t, prod)
 
             J_t = jax.tree_map(
-                lambda i_t, j_t_prev: _update_rtrl_bcco(i_t, j_t_prev),
+                lambda i_t, j_t_prev: mask_by_it(i_t, _update_rtrl_bcco(i_t, j_t_prev)),
                 I_t,
                 J_t_prev,
                 is_leaf=lambda node: isinstance(node, BCOO),
@@ -265,7 +283,9 @@ def forward_rtrl(
     # to use the new primitive with a BCOO matrix of only 2 dimensions.
     # For non-sparse reshapes does not do anything.
     acc_grads = jax.tree_map(
-        lambda acc_grad, grad: acc_grad + grad.reshape(acc_grad.shape), acc_grads, grads
+        lambda acc_grad, grad: acc_grad + grad.reshape(acc_grad.shape),
+        acc_grads,
+        grads,
     )
 
     return h_t, acc_grads, jacobians, loss_t, y_hat
@@ -322,7 +342,7 @@ def rtrl(
     return acc_loss, acc_grads, jacobians_T
 
 
-def forward_sequence(model: RTRLStacked, inputs: Array):
+def forward_sequence(model: RTRLStacked, inputs: Array, use_scan: bool = True):
     hidden_state = jnp.zeros(shape=(model.num_layers, model.hidden_size))
     perturbations = jnp.zeros(shape=(model.num_layers, model.hidden_size))
 
@@ -331,22 +351,35 @@ def forward_sequence(model: RTRLStacked, inputs: Array):
         return h, out
 
     # Ful forward pass over the sequence
-    _, out = jax.lax.scan(
-        lambda carry, input: f_repack(carry, input),
-        init=hidden_state,
-        xs=inputs,
-    )
+    # Add use_scan to test if they actually differ now.
+    if use_scan:
+        _, out = jax.lax.scan(
+            lambda carry, input: f_repack(carry, input),
+            init=hidden_state,
+            xs=inputs,
+        )
+    else:
+        carry = hidden_state
+        y_hats = []
+        for i in range(inputs.shape[0]):
+            carry, y_hat = f_repack(carry, inputs[i])
+            y_hats.append(y_hat)
+
+        y_hats = jnp.stack(y_hats)
+        out = y_hats
 
     return out
 
 
-def loss_func(model: RTRLStacked, inputs: Array, targets: Array):
-    pred = forward_sequence(model, inputs)
+def loss_func(model: RTRLStacked, inputs: Array, targets: Array, use_scan: bool = True):
+    pred = forward_sequence(model, inputs, use_scan)
     errors = jnp.sum((pred - targets) ** 2, axis=1)
     return jnp.sum(errors)
 
 
-def bptt(model: RTRLStacked, inputs: Array, targets: Array):
-    loss, grads = eqx.filter_value_and_grad(loss_func)(model, inputs, targets)
+def bptt(model: RTRLStacked, inputs: Array, targets: Array, use_scan: bool = True):
+    loss, grads = jax.value_and_grad(loss_func, argnums=0)(
+        model, inputs, targets, use_scan
+    )
 
     return loss, grads

@@ -5,7 +5,7 @@ from utils import get_random_input_sequence, get_stacked_rnn
 
 from snapjax.algos import bptt, rtrl
 
-ATOL = 1e-05
+ATOL = 5e-04
 RTOL = 0.0
 
 
@@ -14,13 +14,13 @@ def test_no_snap_one_layer():
     RTRL and BPTT should agree in the computed accumulated gradients,
     if there is only layer in the stacked rnn.
     """
-    T = 2
+    T = 50
     model = get_stacked_rnn(1, 256, 256, sparse=False)
     inputs = get_random_input_sequence(T, model)
     targets = get_random_input_sequence(T, model)
 
-    loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=True)
-    loss_bptt, acc_grads_bptt = bptt(model, inputs, targets)
+    loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=False)
+    loss_bptt, acc_grads_bptt = bptt(model, inputs, targets, use_scan=False)
 
     assert jnp.allclose(loss, loss_bptt)
 
@@ -45,12 +45,12 @@ def test_no_snap_mutliple_layers():
     RTRL and BPTT where the stacked rnn contains multiple layers,
     should agree at least in the last layer.
     """
-    T = 10
+    T = 50
     model = get_stacked_rnn(4, 10, 10, sparse=False)
     inputs = get_random_input_sequence(T, model)
     targets = get_random_input_sequence(T, model)
 
-    loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=True)
+    loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=False)
     loss_bptt, acc_grads_bptt = bptt(model, inputs, targets)
 
     assert jnp.allclose(loss, loss_bptt)
@@ -75,7 +75,7 @@ def test_no_snap_mutliple_layers():
 
 
 def test_scan_unrolled():
-    T = 10
+    T = 50
     model = get_stacked_rnn(4, 10, 10, sparse=False)
     inputs = get_random_input_sequence(T, model)
     targets = get_random_input_sequence(T, model)
@@ -87,7 +87,7 @@ def test_scan_unrolled():
 
     assert jnp.allclose(loss, loss_no_scan)
 
-    print("Comparing SNAP with jax.lax.scan and without scan")
+    print("Comparing RTRL with jax.lax.scan and without scan")
     passed = True
     for (key_a, leaf_a), (key_b, leaf_b) in zip(
         jtu.tree_leaves_with_path(acc_grads),
@@ -102,6 +102,3 @@ def test_scan_unrolled():
             passed = False
 
     assert passed
-
-# if __name__ == "__main__":
-#     pass

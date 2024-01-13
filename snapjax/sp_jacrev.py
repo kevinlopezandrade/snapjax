@@ -59,6 +59,12 @@ class SparseProjection:
         return self._sparse_def
 
 
+# TODO: The following functions: _output_connectivity_from_sparsity,
+# _input_connectivity_from_sparsity, _greedy_color, _expand_jacrev_jac were
+# taken from https://github.com/mfschubert/sparsejac. Ideally I should submit a
+# pull request.
+
+
 def _output_connectivity_from_sparsity(sparsity: ssparse.spmatrix) -> ssparse.spmatrix:
     """Computes the connectivity of output elements, given a Jacobian sparsity.
 
