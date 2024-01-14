@@ -11,15 +11,16 @@ RTOL = 0.0
 
 def test_jacobians():
     T = 50
-    model = get_stacked_rnn(4, 20, 20, sparse=True, seed=7)
-    model_no_sp = get_stacked_rnn(4, 20, 20, sparse=False, seed=7)
+    model = get_stacked_rnn(4, 20, 20, seed=7)
 
     inputs = get_random_sequence(T, model)
     targets = get_random_sequence(T, model)
 
-    loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=True, use_scan=False)
+    loss, acc_grads, _ = rtrl(
+        model, inputs, targets, use_snap_1=True, sparse=True, use_scan=False
+    )
     loss_no_sp, acc_grads_no_sp, _ = rtrl(
-        model_no_sp, inputs, targets, use_snap_1=True, use_scan=False
+        model, inputs, targets, use_snap_1=True, sparse=False, use_scan=False
     )
 
     assert jnp.allclose(loss, loss_no_sp)

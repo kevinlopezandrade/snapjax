@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, List, Tuple, cast
+from typing import Any, List, Sequence, Tuple, cast
 
 import equinox as eqx
 import jax
@@ -7,9 +7,9 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from jax import config
 from jax.experimental.sparse import BCOO, BCSR
-from jaxtyping import Array, PyTree
+from jaxtyping import Array
 
-from snapjax.cells.base import RTRLCell, RTRLLayer, RTRLStacked
+from snapjax.cells.base import RTRLCell, RTRLStacked, State
 from snapjax.sp_jacrev import SparseProjection
 from snapjax.spp_primitives.primitives import spp_csr_matmul_jax
 
@@ -81,16 +81,16 @@ def _make_zeros_jacobians_bcco(model: RTRLStacked):
 
 
 def _make_zeros_jacobians(model: RTRLStacked):
-    # Make jacobians only for RTRLCells
-    zero_jacobians = eqx.filter(
-        model, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell
+    cells = eqx.filter(model, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell)
+
+    def _cell_zero_jacobian(cell: RTRLCell):
+        return type(cell).make_zero_jacobians(cell)
+
+    zero_jacobians = jtu.tree_map(
+        lambda cell: _cell_zero_jacobian(cell),
+        cells,
+        is_leaf=lambda leaf: is_rtrl_cell(leaf),
     )
-
-    def zeros_in_leaf(leaf):
-        return jnp.zeros(shape=(model.hidden_size, *leaf.shape))
-
-    zero_jacobians = jax.tree_map(zeros_in_leaf, zero_jacobians)
-    zero_jacobians = cast(RTRLStacked, zero_jacobians)
 
     return zero_jacobians
 
@@ -111,7 +111,7 @@ def make_zeros_grads(model: RTRLStacked):
     return zero_grads
 
 
-@jax.jit
+@partial(jax.jit, static_argnums=6)
 def step_loss(
     model_spatial: RTRLStacked,
     model_rtrl: RTRLStacked,
@@ -119,9 +119,10 @@ def step_loss(
     x_t: Array,
     perturbations: Array,
     y_t: Array,
+    sparse: bool = False,
 ):
     model = eqx.combine(model_spatial, model_rtrl)
-    h_t, y_hat, inmediate_jacobians = model.f(h_prev, x_t, perturbations)
+    h_t, inmediate_jacobians, y_hat = model.f(h_prev, x_t, perturbations, sparse)
 
     diff = (y_t - y_hat) ** 2
 
@@ -188,21 +189,21 @@ def update_cell_jacobians(
         return J_t
 
 
-@partial(jax.jit, static_argnums=(2))
+@partial(jax.jit, static_argnums=(2, 3))
 def update_jacobians_rtrl(
     jacobians_prev: RTRLStacked,
     inmediate_jacobians: List[Tuple[RTRLCell, Array]],
     use_snap_1: bool = False,
+    sparse: bool = False,
 ):
     # Jax will do loop unrolling here, but number of layers is not that big
     # so it will be fine.
     jacobians = jacobians_prev
-    is_sparse = jacobians_prev.sparse
     for i in range(jacobians_prev.num_layers):
         I_t, D_t = inmediate_jacobians[i]
         J_t_prev = jacobians.layers[i].cell
         J_t = update_cell_jacobians(
-            I_t, D_t, J_t_prev, use_snap_1=use_snap_1, sparse=is_sparse
+            I_t, D_t, J_t_prev, use_snap_1=use_snap_1, sparse=sparse
         )
 
         jacobians = eqx.tree_at(lambda model: model.layers[i].cell, jacobians, J_t)
@@ -210,27 +211,27 @@ def update_jacobians_rtrl(
     return jacobians
 
 
-@jax.jit
+@partial(jax.jit, static_argnums=3)
 def update_rtrl_cells_grads(
     grads: RTRLStacked,
     hidden_states_grads: List[Array],
     jacobians: RTRLStacked,
+    sparse: bool = False,
 ):
-    def _leaf_function(sparse):
-        if sparse:
+    def _leaf_function(is_sparse):
+        if is_sparse:
             _is_leaf_func = lambda node: isinstance(node, BCOO)
             return _is_leaf_func
         else:
             return None
 
-    is_sparse = grads.sparse
     for i in range(grads.num_layers):
         ht_grad = hidden_states_grads[i]
         rtrl_cell_jac = jacobians.layers[i].cell
         rtrl_cell_grads = jax.tree_map(
             lambda jacobian: ht_grad @ jacobian,
             rtrl_cell_jac,
-            is_leaf=_leaf_function(is_sparse),
+            is_leaf=_leaf_function(sparse),
         )
         grads = eqx.tree_at(
             lambda grads: grads.layers[i].cell,
@@ -242,6 +243,16 @@ def update_rtrl_cells_grads(
     return grads
 
 
+def make_perturbations(model: RTRLStacked):
+    L = model.num_layers
+    perturbations = [None] * L
+    for i in range(L):
+        cell = model.layers[i].cell
+        perturbations[i] = jnp.zeros(cell.hidden_size)
+
+    return tuple(perturbations)
+
+
 # This should be a pure function.
 def forward_rtrl(
     model: RTRLStacked,
@@ -251,6 +262,7 @@ def forward_rtrl(
     input: Array,
     target: Array,
     use_snap_1: bool = False,
+    sparse: bool = False,
 ):
     print("Compiling forward_rtrl")
     theta_rtrl, theta_spatial = eqx.partition(
@@ -259,25 +271,22 @@ def forward_rtrl(
         is_leaf=is_rtrl_cell,
     )
     step_loss_and_grad = jax.value_and_grad(step_loss, argnums=(0, 4), has_aux=True)
-    perturbations = jnp.zeros(shape=(theta_rtrl.num_layers, theta_rtrl.hidden_size))
+    perturbations = make_perturbations(theta_rtrl)
 
     (loss_t, aux), (grads) = step_loss_and_grad(
-        theta_spatial,
-        theta_rtrl,
-        h_prev,
-        input,
-        perturbations,
-        target,
+        theta_spatial, theta_rtrl, h_prev, input, perturbations, target, sparse=sparse
     )
 
     h_t, y_hat, inmediate_jacobians = aux
     spatial_grads, hidden_states_grads = grads
 
     jacobians = update_jacobians_rtrl(
-        jacobians_prev, inmediate_jacobians, use_snap_1=use_snap_1
+        jacobians_prev, inmediate_jacobians, use_snap_1=use_snap_1, sparse=sparse
     )
 
-    grads = update_rtrl_cells_grads(spatial_grads, hidden_states_grads, jacobians)
+    grads = update_rtrl_cells_grads(
+        spatial_grads, hidden_states_grads, jacobians, sparse=sparse
+    )
 
     # Reshape is needed in the addition since I flattened the arrays
     # to use the new primitive with a BCOO matrix of only 2 dimensions.
@@ -291,12 +300,22 @@ def forward_rtrl(
     return h_t, acc_grads, jacobians, loss_t, y_hat
 
 
+def init_state(model: RTRLStacked):
+    states: Sequence[State] = []
+    for layer in model.layers:
+        cell = layer.cell
+        states.append(type(cell).init_state(cell))
+
+    return tuple(states)
+
+
 def rtrl(
     model: RTRLStacked,
     inputs: Array,
     targets: Array,
-    use_snap_1: bool = False,
     use_scan: bool = True,
+    use_snap_1: bool = False,
+    sparse: bool = False,
 ):
     def forward_repack(carry, data):
         input, target = data
@@ -310,15 +329,16 @@ def rtrl(
             input,
             target,
             use_snap_1=use_snap_1,
+            sparse=sparse,
         )
         h_t, acc_grads, jacobians_t, loss_t, y_hat = out
         acc_loss = acc_loss + loss_t
 
         return (h_t, acc_grads, jacobians_t, acc_loss), y_hat
 
-    h_init = jnp.zeros(shape=(model.num_layers, model.hidden_size))
-    acc_grads = make_zeros_grads(model)
-    zero_jacobians = make_zeros_jacobians(model, model.sparse)
+    h_init: Sequence[State] = init_state(model)
+    acc_grads: RTRLStacked = make_zeros_grads(model)
+    zero_jacobians: RTRLStacked = make_zeros_jacobians(model, sparse=sparse)
     acc_loss = 0.0
 
     if use_scan:
@@ -343,11 +363,11 @@ def rtrl(
 
 
 def forward_sequence(model: RTRLStacked, inputs: Array, use_scan: bool = True):
-    hidden_state = jnp.zeros(shape=(model.num_layers, model.hidden_size))
-    perturbations = jnp.zeros(shape=(model.num_layers, model.hidden_size))
+    hidden_state = init_state(model)
+    perturbations = jnp.zeros(shape=(model.num_layers, model.d_inp))
 
-    def f_repack(h: Array, input: Array):
-        h, out, _ = model.f(h, input, perturbations)
+    def f_repack(state: Sequence[State], input: Array):
+        h, _, out = model.f(state, input, perturbations)
         return h, out
 
     # Ful forward pass over the sequence

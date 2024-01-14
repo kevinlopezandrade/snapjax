@@ -1,33 +1,76 @@
 from abc import abstractmethod
-from typing import Any, List
+from typing import List, Sequence, Tuple
 
 import equinox as eqx
+from jaxtyping import Array
+
+State = Sequence[Array]
+Jacobians = Tuple["RTRLCell", Sequence[Array]]
 
 
 class RTRLCell(eqx.Module):
+    """
+    s_(t) = f(s_(t-1), x(t))
+    """
+
     hidden_size: eqx.AbstractVar[int]
     input_size: eqx.AbstractVar[int]
 
+    @abstractmethod
+    def f(self, state: State, input: Array) -> State:
+        ...
+
+    @staticmethod
+    @abstractmethod
+    def init_state(cell: "RTRLCell") -> State:
+        ...
+
+    @staticmethod
+    @abstractmethod
+    def make_zero_jacobians(cell: "RTRLCell") -> Jacobians:
+        ...
+
+    @staticmethod
+    @abstractmethod
+    def make_sp_pattern(cell: "RTRLCell") -> "RTRLCell":
+        ...
+
 
 class RTRLLayer(eqx.Module):
+    """
+    s_(t), y_(t), theta_t, = f(s_(t-1), x(t))
+    """
+
     cell: eqx.AbstractVar[RTRLCell]
     cell_sp_projection: eqx.AbstractVar[RTRLCell]
 
     @abstractmethod
-    def f(self, *args, **kwargs) -> Any:
-        ...
-
-    @abstractmethod
-    def f_sp(self, *args, **kwargs) -> Any:
+    def f(
+        self,
+        state: State,
+        input: Array,
+        perturbation: Array,
+        sparse: bool = False,
+    ) -> Tuple[State, Jacobians, Array]:
         ...
 
 
 class RTRLStacked(eqx.Module):
+    """
+    s_1:L_(t), theta_1:L_(t), y_L(t) = f_1:L(s_1:L_(t-1), x(t))
+    """
+
     layers: eqx.AbstractVar[List[RTRLLayer]]
     num_layers: eqx.AbstractVar[int]
-    hidden_size: eqx.AbstractVar[int]
-    sparse: eqx.AbstractVar[bool]
+    d_inp: eqx.AbstractVar[int]
+    d_out: eqx.AbstractVar[int]
 
     @abstractmethod
-    def f(self, *args) -> Any:
+    def f(
+        self,
+        state: Sequence[State],
+        input: Array,
+        perturbations: Array,
+        sparse: bool = False,
+    ) -> Tuple[Sequence[State], Sequence[Jacobians], Array]:
         ...
