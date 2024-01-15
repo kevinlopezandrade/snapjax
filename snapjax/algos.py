@@ -143,6 +143,21 @@ def mask_by_it(i_t: BCOO, j_t: BCOO):
     )
 
 
+@jax.jit
+def sparse_update(I_t: RTRLCell, dynamics: Array, J_t_prev: RTRLCell):
+    def _update_rtrl_bcco(i_t: BCOO, j_t_prev: BCOO) -> BCOO:
+        prod = dense_coo_product_jax(dynamics, j_t_prev, j_t_prev.indices)
+        return sparse_matching_addition(i_t, prod)
+
+    J_t = jax.tree_map(
+        lambda i_t, j_t_prev: mask_by_it(i_t, _update_rtrl_bcco(i_t, j_t_prev)),
+        I_t,
+        J_t_prev,
+        is_leaf=lambda node: isinstance(node, BCOO),
+    )
+    return J_t
+
+
 @partial(jax.jit, static_argnums=(3, 4))
 def update_cell_jacobians(
     I_t: RTRLCell,
@@ -154,17 +169,7 @@ def update_cell_jacobians(
     # RTRL
     if use_snap_1:
         if sparse:
-
-            def _update_rtrl_bcco(i_t: BCOO, j_t_prev: BCOO) -> BCOO:
-                prod = dense_coo_product_jax(dynamics, j_t_prev, j_t_prev.indices)
-                return sparse_matching_addition(i_t, prod)
-
-            J_t = jax.tree_map(
-                lambda i_t, j_t_prev: mask_by_it(i_t, _update_rtrl_bcco(i_t, j_t_prev)),
-                I_t,
-                J_t_prev,
-                is_leaf=lambda node: isinstance(node, BCOO),
-            )
+            J_t = sparse_update(I_t, dynamics, J_t_prev)
             return J_t
         else:
             # The theoretical one from the paper.
@@ -264,7 +269,6 @@ def forward_rtrl(
     use_snap_1: bool = False,
     sparse: bool = False,
 ):
-    print("Compiling forward_rtrl")
     theta_rtrl, theta_spatial = eqx.partition(
         model,
         lambda leaf: is_rtrl_cell(leaf),
@@ -349,10 +353,11 @@ def rtrl(
         )
     else:
         carry = (h_init, acc_grads, zero_jacobians, acc_loss)
-        y_hats = []
+        T = inputs.shape[0]
+        y_hats = [None] * T
         for i in range(inputs.shape[0]):
             carry, y_hat = forward_repack(carry, (inputs[i], targets[i]))
-            y_hats.append(y_hat)
+            y_hats[i] = y_hat
 
         y_hats = jnp.stack(y_hats)
         carry_T = carry

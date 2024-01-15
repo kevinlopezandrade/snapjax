@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Sequence, Type
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
 
 import equinox as eqx
 import jax

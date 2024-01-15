@@ -38,7 +38,7 @@ class RTRLCell(eqx.Module):
 
 class RTRLLayer(eqx.Module):
     """
-    s_(t), y_(t), theta_t, = f(s_(t-1), x(t))
+    s_(t), theta_t, y_(t) = f(s_(t-1), x(t))
     """
 
     cell: eqx.AbstractVar[RTRLCell]
