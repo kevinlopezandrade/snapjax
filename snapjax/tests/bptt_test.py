@@ -1,11 +1,15 @@
+from jax import config
+
+config.update("jax_enable_x64", True)
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from utils import get_random_sequence, get_stacked_rnn
 
 from snapjax.algos import bptt, rtrl
+from snapjax.tests.utils import get_random_sequence, get_stacked_rnn
 
-ATOL = 5e-04
+ATOL = 1e-12
 RTOL = 0.0
 
 
@@ -33,6 +37,8 @@ def test_no_snap_one_layer():
     ):
         if jnp.allclose(leaf_a, leaf_b, atol=ATOL, rtol=RTOL):
             print("Match", jtu.keystr(key_a))
+            print("\tMax difference: ", jnp.max(jnp.abs(leaf_a - leaf_b)))
+            print("\tMean difference: ", jnp.mean(jnp.abs(leaf_a - leaf_b)))
         else:
             print("Don't Match", jtu.keystr(key_a))
             print("\tMax difference: ", jnp.max(jnp.abs(leaf_a - leaf_b)))
@@ -69,6 +75,8 @@ def test_no_snap_mutliple_layers():
     ):
         if jnp.allclose(leaf_a, leaf_b, atol=ATOL, rtol=RTOL):
             print("Match", jtu.keystr(key_a))
+            print("\tMax difference: ", jnp.max(jnp.abs(leaf_a - leaf_b)))
+            print("\tMean difference: ", jnp.mean(jnp.abs(leaf_a - leaf_b)))
         else:
             print("Don't Match", jtu.keystr(key_a))
             print("\tMax difference: ", jnp.max(jnp.abs(leaf_a - leaf_b)))
@@ -78,6 +86,8 @@ def test_no_snap_mutliple_layers():
     assert passed
 
 
+#
+#
 def test_scan_unrolled():
     T = 50
     model = get_stacked_rnn(4, 10, 10)
@@ -101,6 +111,8 @@ def test_scan_unrolled():
     ):
         if jnp.allclose(leaf_a, leaf_b, atol=ATOL, rtol=RTOL):
             print("Match", jtu.keystr(key_a))
+            print("\tMax difference: ", jnp.max(jnp.abs(leaf_a - leaf_b)))
+            print("\tMean difference: ", jnp.mean(jnp.abs(leaf_a - leaf_b)))
         else:
             print("Don't Match", jtu.keystr(key_a))
             print("\tMax difference: ", jnp.max(jnp.abs(leaf_a - leaf_b)))

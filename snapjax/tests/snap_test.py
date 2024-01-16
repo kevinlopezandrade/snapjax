@@ -1,9 +1,9 @@
 import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from utils import get_random_sequence, get_stacked_rnn
 
 from snapjax.algos import rtrl
+from snapjax.tests.utils import get_random_sequence, get_stacked_rnn
 
 ATOL = 1e-07
 RTOL = 0.0
