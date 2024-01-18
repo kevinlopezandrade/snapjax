@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import List, Sequence, Tuple
+from typing import Any, List, Sequence, Tuple
 
 import equinox as eqx
 from jaxtyping import Array
@@ -42,7 +42,6 @@ class RTRLLayer(eqx.Module):
     """
 
     cell: eqx.AbstractVar[RTRLCell]
-    cell_sp_projection: eqx.AbstractVar[RTRLCell]
 
     @abstractmethod
     def f(
@@ -50,7 +49,7 @@ class RTRLLayer(eqx.Module):
         state: State,
         input: Array,
         perturbation: Array,
-        sparse: bool = False,
+        sp_projection_cell: RTRLCell = None,
     ) -> Tuple[State, Jacobians, Array]:
         ...
 
@@ -71,6 +70,17 @@ class RTRLStacked(eqx.Module):
         state: Sequence[State],
         input: Array,
         perturbations: Array,
-        sparse: bool = False,
+        sp_projection_tree: "RTRLStacked" = None,
     ) -> Tuple[Sequence[State], Sequence[Jacobians], Array]:
         ...
+
+    @abstractmethod
+    def get_sp_projection_tree(self) -> "RTRLStacked":
+        ...
+
+
+def is_rtrl_cell(node: Any):
+    if isinstance(node, RTRLCell):
+        return True
+    else:
+        return False

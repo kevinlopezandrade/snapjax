@@ -95,7 +95,6 @@ class RNNLayer(RTRLLayer):
     cell: RNN
     C: eqx.nn.Linear
     D: eqx.nn.Linear
-    cell_sp_projection: RNN = eqx.field(static=True)
 
     def __init__(
         self,
@@ -107,7 +106,6 @@ class RNNLayer(RTRLLayer):
     ):
         cell_key, c_key, d_key = jax.random.split(key, 3)
         self.cell = RNN(hidden_size, input_size, use_bias=use_bias, key=cell_key)
-        self.cell_sp_projection = sp_projection_matrices(RNN.make_sp_pattern(self.cell))
         self.C = eqx.nn.Linear(hidden_size, hidden_size, use_bias=False, key=c_key)
         self.D = eqx.nn.Linear(hidden_size, input_size, use_bias=False, key=d_key)
 
@@ -116,7 +114,7 @@ class RNNLayer(RTRLLayer):
         state: State,
         input: Array,
         perturbation: Array,
-        sparse: bool = False,
+        sp_projection_cell: RNN = None,
     ) -> Tuple[State, Jacobians, Array]:
         """
         Returns h_(t), y_(t)
@@ -125,9 +123,9 @@ class RNNLayer(RTRLLayer):
         h_out = self.cell.f(state, input) + perturbation
 
         # Compute Jacobian and dynamics
-        if sparse:
+        if sp_projection_cell:
             sp_jacobian_fun = sp_jacrev(
-                jtu.Partial(RNN.f, state=state, input=input), self.cell_sp_projection
+                jtu.Partial(RNN.f, state=state, input=input), sp_projection_cell
             )
             inmediate_jacobian = sp_jacobian_fun(self.cell)
             dynamics_fun = jax.jacrev(RNN.f, argnums=1)

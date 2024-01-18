@@ -9,18 +9,11 @@ from jax import config
 from jax.experimental.sparse import BCOO, BCSR
 from jaxtyping import Array
 
-from snapjax.cells.base import RTRLCell, RTRLStacked, State
+from snapjax.cells.base import RTRLCell, RTRLStacked, State, is_rtrl_cell
 from snapjax.sp_jacrev import SparseProjection
 from snapjax.spp_primitives.primitives import spp_csr_matmul
 
 config.update("jax_numpy_rank_promotion", "raise")
-
-
-def is_rtrl_cell(node: Any):
-    if isinstance(node, RTRLCell):
-        return True
-    else:
-        return False
 
 
 @jax.jit
@@ -53,29 +46,23 @@ def sparse_matching_addition(A: BCOO, B: BCOO) -> BCOO:
     )
 
 
-def _make_zeros_jacobians_bcco(model: RTRLStacked):
-    # Make jacobians only for RTRLCells
-    zero_jacobians = eqx.filter(
-        model, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell
+def _make_zeros_jacobians_bcco(sp_projection_tree: RTRLStacked):
+    def _sparse_jacobian(leaf: SparseProjection):
+        zeros = jnp.zeros(leaf.sparse_def.nse)
+        indices = leaf.sparse_def.indices
+        structure = (zeros, indices)
+        return BCOO(
+            structure,
+            shape=leaf.sparse_def.shape,
+            indices_sorted=True,  # This is guaranteed in if sparse_def
+            unique_indices=True,  # is properly constructed.
+        )
+
+    zero_jacobians = jtu.tree_map(
+        lambda leaf: _sparse_jacobian(leaf),
+        sp_projection_tree,
+        is_leaf=lambda node: isinstance(node, SparseProjection),
     )
-
-    for i in range(model.num_layers):
-        sp_projection = model.layers[i].cell_sp_projection
-        zeros_jac = jtu.tree_map(
-            lambda sp: BCOO(
-                (jnp.zeros(sp.sparse_def.nse), sp.sparse_def.indices),
-                shape=sp.sparse_def.shape,
-                indices_sorted=True,  # This is guaranteed in if sparse_def
-                unique_indices=True,  # is properly constructed.
-            ),
-            sp_projection,
-            is_leaf=lambda node: isinstance(node, SparseProjection),
-        )
-        zero_jacobians = eqx.tree_at(
-            lambda model: model.layers[i].cell, zero_jacobians, zeros_jac
-        )
-
-    zero_jacobians = cast(RTRLStacked, zero_jacobians)
 
     return zero_jacobians
 
@@ -84,7 +71,7 @@ def _make_zeros_jacobians(model: RTRLStacked):
     cells = eqx.filter(model, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell)
 
     def _cell_zero_jacobian(cell: RTRLCell):
-        return type(cell).make_zero_jacobians(cell)
+        return cell.make_zero_jacobians(cell)
 
     zero_jacobians = jtu.tree_map(
         lambda cell: _cell_zero_jacobian(cell),
@@ -95,9 +82,9 @@ def _make_zeros_jacobians(model: RTRLStacked):
     return zero_jacobians
 
 
-def make_zeros_jacobians(model: RTRLStacked, sparse: bool = False):
-    if sparse:
-        return _make_zeros_jacobians_bcco(model)
+def make_zeros_jacobians(model: RTRLStacked, sp_projection_tree: RTRLStacked = None):
+    if sp_projection_tree:
+        return _make_zeros_jacobians_bcco(sp_projection_tree)
     else:
         return _make_zeros_jacobians(model)
 
@@ -111,7 +98,7 @@ def make_zeros_grads(model: RTRLStacked):
     return zero_grads
 
 
-@partial(jax.jit, static_argnums=6)
+@jax.jit
 def step_loss(
     model_spatial: RTRLStacked,
     model_rtrl: RTRLStacked,
@@ -119,10 +106,12 @@ def step_loss(
     x_t: Array,
     perturbations: Array,
     y_t: Array,
-    sparse: bool = False,
+    sp_projection_tree: RTRLStacked = None,
 ):
     model = eqx.combine(model_spatial, model_rtrl)
-    h_t, inmediate_jacobians, y_hat = model.f(h_prev, x_t, perturbations, sparse)
+    h_t, inmediate_jacobians, y_hat = model.f(
+        h_prev, x_t, perturbations, sp_projection_tree
+    )
 
     diff = (y_t - y_hat) ** 2
 
@@ -267,7 +256,7 @@ def forward_rtrl(
     input: Array,
     target: Array,
     use_snap_1: bool = False,
-    sparse: bool = False,
+    sp_projection_tree: RTRLStacked = None,
 ):
     theta_rtrl, theta_spatial = eqx.partition(
         model,
@@ -278,12 +267,19 @@ def forward_rtrl(
     perturbations = make_perturbations(theta_rtrl)
 
     (loss_t, aux), (grads) = step_loss_and_grad(
-        theta_spatial, theta_rtrl, h_prev, input, perturbations, target, sparse=sparse
+        theta_spatial,
+        theta_rtrl,
+        h_prev,
+        input,
+        perturbations,
+        target,
+        sp_projection_tree=sp_projection_tree,
     )
 
     h_t, y_hat, inmediate_jacobians = aux
     spatial_grads, hidden_states_grads = grads
 
+    sparse = True if sp_projection_tree else False
     jacobians = update_jacobians_rtrl(
         jacobians_prev, inmediate_jacobians, use_snap_1=use_snap_1, sparse=sparse
     )
@@ -319,7 +315,7 @@ def rtrl(
     targets: Array,
     use_scan: bool = True,
     use_snap_1: bool = False,
-    sparse: bool = False,
+    sp_projection_tree: RTRLStacked = None,
 ):
     def forward_repack(carry, data):
         input, target = data
@@ -333,7 +329,7 @@ def rtrl(
             input,
             target,
             use_snap_1=use_snap_1,
-            sparse=sparse,
+            sp_projection_tree=sp_projection_tree,
         )
         h_t, acc_grads, jacobians_t, loss_t, y_hat = out
         acc_loss = acc_loss + loss_t
@@ -342,7 +338,9 @@ def rtrl(
 
     h_init: Sequence[State] = init_state(model)
     acc_grads: RTRLStacked = make_zeros_grads(model)
-    zero_jacobians: RTRLStacked = make_zeros_jacobians(model, sparse=sparse)
+    zero_jacobians: RTRLStacked = make_zeros_jacobians(
+        model, sp_projection_tree=sp_projection_tree
+    )
     acc_loss = 0.0
 
     if use_scan:

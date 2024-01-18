@@ -2,9 +2,18 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
 
 import equinox as eqx
 import jax
+import jax.tree_util as jtu
 from jaxtyping import Array, PRNGKeyArray
 
-from snapjax.cells.base import Jacobians, RTRLLayer, RTRLStacked, State
+from snapjax.cells.base import (
+    Jacobians,
+    RTRLCell,
+    RTRLLayer,
+    RTRLStacked,
+    State,
+    is_rtrl_cell,
+)
+from snapjax.sp_jacrev import sp_projection_matrices
 
 
 class Stacked(RTRLStacked):
@@ -42,17 +51,37 @@ class Stacked(RTRLStacked):
         state: Sequence[State],
         input: Array,
         perturbations: Array,
-        sparse: bool = False,
+        sp_projection_tree: "Stacked" = None,
     ):
         new_state: List[State] = []
         inmediate_jacobians: List[Jacobians] = []
         out = input
 
         for i, cell in enumerate(self.layers):
+            if sp_projection_tree:
+                sp_projection_cell = sp_projection_tree.layers[i].cell
+            else:
+                sp_projection_cell = None
+
             layer_state, jacobians, out = cell.f(
-                state[i], out, perturbations[i], sparse
+                state[i], out, perturbations[i], sp_projection_cell
             )
             new_state.append(layer_state)
             inmediate_jacobians.append(jacobians)
 
         return tuple(new_state), tuple(inmediate_jacobians), out
+
+    def get_sp_projection_tree(self):
+        """
+        Gets the sparse projection tree, from only
+        the layers annotated as RTRLCell.
+        """
+        cells = eqx.filter(self, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell)
+
+        sp_tree = jtu.tree_map(
+            lambda cell: sp_projection_matrices(cell.make_sp_pattern(cell)),
+            cells,
+            is_leaf=is_rtrl_cell,
+        )
+
+        return sp_tree
