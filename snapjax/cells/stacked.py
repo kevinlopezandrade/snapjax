@@ -76,12 +76,24 @@ class Stacked(RTRLStacked):
         Gets the sparse projection tree, from only
         the layers annotated as RTRLCell.
         """
-        cells = eqx.filter(self, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell)
+        default = jax.default_backend()
+        cpu_device = jax.devices("cpu")[0]
 
+        # Move the RNN to CPU, to avoid creating the
+        # explicit jacobians in the GPU.
+        cells = eqx.filter(self, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell)
+        cells = jtu.tree_map(lambda leaf: jax.device_put(leaf, cpu_device), cells)
+
+        with jax.default_device(jax.devices("cpu")[0]):
+            sp_tree = jtu.tree_map(
+                lambda cell: sp_projection_matrices(cell.make_sp_pattern(cell)),
+                cells,
+                is_leaf=is_rtrl_cell,
+            )
+
+        # Move back to GPU once computed.
         sp_tree = jtu.tree_map(
-            lambda cell: sp_projection_matrices(cell.make_sp_pattern(cell)),
-            cells,
-            is_leaf=is_rtrl_cell,
+            lambda leaf: jax.device_put(leaf, jax.devices(default)[0]), sp_tree
         )
 
         return sp_tree
