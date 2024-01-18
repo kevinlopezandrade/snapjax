@@ -12,6 +12,8 @@ from jax.lib import xla_client
 from numba import carray, cfunc, types
 from numpy.typing import NDArray
 
+from . import sp_ops
+
 """
 The new primitive works as follows. It takes an CSR matrix,
 with data, cols, indptr, a B dense matrix and a sparse pattern matrix,
@@ -149,12 +151,12 @@ def xla_spp_csr_matmul(output_ptr, input_ptrs):
     )
 
 
+def spp_csr_matmul(data, cols, indptr, RHS, sp):
+    return spp_csr_matmul_p.bind(data, cols, indptr, RHS, sp)
+
+
 spp_csr_matmul_p = core.Primitive("spp_csr_matmul")
 spp_csr_matmul_p.def_impl(partial(xla.apply_primitive, spp_csr_matmul_p))
-
-
-def spp_csr_matmul_jax(data, cols, indptr, RHS, sp):
-    return spp_csr_matmul_p.bind(data, cols, indptr, RHS, sp)
 
 
 def spp_csr_matmul_abstract_eval(data, cols, indptr, RHS, sp):
@@ -226,6 +228,58 @@ def _spp_csr_matmul_lowering(ctx, data, cols, indptr, RHS, sp):
 
 mlir.register_lowering(spp_csr_matmul_p, _spp_csr_matmul_lowering, platform="cpu")
 
+# Register functions defined in gpu_ops as custom call target for GPUs
+for _name, _value in sp_ops.registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform="gpu")
+
+
+def _spp_csr_matmul_cuda_lowering(ctx, data, cols, indptr, RHS, sp):
+    data_type = ir.RankedTensorType(data.type)
+    cols_type = ir.RankedTensorType(cols.type)
+    indptr_type = ir.RankedTensorType(indptr.type)
+    RHS_type = ir.RankedTensorType(RHS.type)
+    sp_type = ir.RankedTensorType(sp.type)
+
+    descriptor_opaque = sp_ops.build_csr_and_dense_descriptor(
+        data_type.shape[0],
+        indptr_type.shape[0],
+        sp_type.shape[0],
+        RHS_type.shape[0],
+        RHS_type.shape[1],
+    )
+
+    out_shape = (sp_type.shape[0],)
+
+    out = mlir.custom_call(
+        b"spp_csr_matmul_cuda",
+        result_types=[ir.RankedTensorType.get(out_shape, data_type.element_type)],
+        operands=[
+            data,
+            cols,
+            indptr,
+            RHS,
+            sp,
+        ],
+        operand_layouts=[
+            _get_layout(data_type.shape),
+            _get_layout(cols_type.shape),
+            _get_layout(indptr_type.shape),
+            _get_layout(RHS_type.shape),
+            _get_layout(sp_type.shape),
+        ],
+        result_layouts=[_get_layout(out_shape)],
+        backend_config=descriptor_opaque,
+    ).results
+
+    return out
+
+
+mlir.register_lowering(
+    spp_csr_matmul_p,
+    _spp_csr_matmul_cuda_lowering,
+    platform="gpu",
+)
+
 # Batching
 
 # Jax will do loop unrolling here since spp_csr_matmul_batch must be traceable
@@ -242,15 +296,14 @@ def spp_csr_matmul_batch(args, batch_axes):
     if data.ndim == 1:
         # Then I'm batching only over RHS
         data_batched = [
-            spp_csr_matmul_jax(data, cols, indptr, RHS[i], sp)
-            for i in range(RHS.shape[0])
+            spp_csr_matmul(data, cols, indptr, RHS[i], sp) for i in range(RHS.shape[0])
         ]
         data_batched = jnp.stack(data_batched)
         return data_batched, 0
     if data.ndim == 2:
         # Then I'm batching over data and RHS.
         data_batched = [
-            spp_csr_matmul_jax(data[i], cols, indptr, RHS[i], sp)
+            spp_csr_matmul(data[i], cols, indptr, RHS[i], sp)
             for i in range(data.shape[0])
         ]
         data_batched = jnp.stack(data_batched)

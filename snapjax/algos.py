@@ -11,7 +11,7 @@ from jaxtyping import Array
 
 from snapjax.cells.base import RTRLCell, RTRLStacked, State
 from snapjax.sp_jacrev import SparseProjection
-from snapjax.spp_primitives.primitives import spp_csr_matmul_jax
+from snapjax.spp_primitives.primitives import spp_csr_matmul
 
 config.update("jax_numpy_rank_promotion", "raise")
 
@@ -24,7 +24,7 @@ def is_rtrl_cell(node: Any):
 
 
 @jax.jit
-def dense_coo_product_jax(D: Array, J: BCOO, sp: Array):
+def dense_coo_product(D: Array, J: BCOO, sp: Array):
     orig_shape = J.shape
     J = J.transpose()
 
@@ -35,7 +35,7 @@ def dense_coo_product_jax(D: Array, J: BCOO, sp: Array):
     sp_T = sp.at[:, 0].set(sp[:, 1])
     sp_T = sp_T.at[:, 1].set(sp[:, 0])
 
-    data = spp_csr_matmul_jax(J.data, J.indices, J.indptr, D, sp_T)
+    data = spp_csr_matmul(J.data, J.indices, J.indptr, D, sp_T)
 
     # No need to do the transpose since, sp is already in the shape we want.
     return BCOO((data, sp), shape=orig_shape, indices_sorted=True, unique_indices=True)
@@ -146,7 +146,7 @@ def mask_by_it(i_t: BCOO, j_t: BCOO):
 @jax.jit
 def sparse_update(I_t: RTRLCell, dynamics: Array, J_t_prev: RTRLCell):
     def _update_rtrl_bcco(i_t: BCOO, j_t_prev: BCOO) -> BCOO:
-        prod = dense_coo_product_jax(dynamics, j_t_prev, j_t_prev.indices)
+        prod = dense_coo_product(dynamics, j_t_prev, j_t_prev.indices)
         return sparse_matching_addition(i_t, prod)
 
     J_t = jax.tree_map(
