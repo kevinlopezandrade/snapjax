@@ -174,7 +174,9 @@ def sp_projection_matrices(sparse_patterns: PyTree) -> PyTree:
         projection_matrix = (
             jnp.arange(ncolors)[:, jnp.newaxis] == output_coloring[jnp.newaxis, :]
         )
-        projection_matrix = projection_matrix.astype(jnp.float32)
+
+        # HACK: Promote either to float32 or float64
+        projection_matrix = projection_matrix * 1.0
 
         # We dont' need the data for the sparsity, only their structure.
         # HACK: Create an appropiate data structure for this.

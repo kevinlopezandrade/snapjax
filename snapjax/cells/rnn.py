@@ -4,6 +4,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
+import numpy as np
 from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray
 
@@ -77,16 +78,29 @@ class RNN(RTRLCell):
 
     @staticmethod
     def make_sp_pattern(cell: "RNN"):
-        h = jnp.ones(cell.hidden_size)
-        x = jnp.ones(cell.input_size)
+        h = cell.hidden_size
 
-        jacobian_fun = jax.jacrev(RNN.f, argnums=0)
-        jacobian = jacobian_fun(cell, h, x)
+        def _build_jacobian_bcoo(leaf):
+            if leaf.ndim == 1:
+                return BCOO.fromdense(jnp.eye(h, dtype=jnp.int32))
+            else:
+                data = np.ones(h * h, dtype=np.int32)
+                indices = np.zeros((h * h, 2), dtype=np.int32)
+                for i in range(h):
+                    indices[(i * h) : (i + 1) * h, 0] = np.repeat(i, h)
+                    indices[(i * h) : (i + 1) * h, 1] = np.arange(h) + (i * h)
 
-        sp = jtu.tree_map(
-            lambda mat: BCOO.fromdense(jnp.abs(mat.reshape(mat.shape[0], -1)) > 0),
-            jacobian,
-        )
+                data = jnp.array(data)
+                indices = jnp.array(indices)
+                res = BCOO(
+                    (data, indices),
+                    shape=(h, h * h),
+                    indices_sorted=True,
+                    unique_indices=True,
+                )
+                return res
+
+        sp = jtu.tree_map(lambda leaf: _build_jacobian_bcoo(leaf), cell)
 
         return sp
 

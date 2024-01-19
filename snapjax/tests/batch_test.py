@@ -1,3 +1,7 @@
+from jax import config
+
+config.update("jax_enable_x64", True)
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,7 +10,7 @@ import jax.tree_util as jtu
 from snapjax.algos import rtrl
 from snapjax.tests.utils import get_random_batch, get_stacked_rnn
 
-ATOL = 1e-05  # It has to be numerically stability.
+ATOL = 1e-12
 RTOL = 0.0
 
 

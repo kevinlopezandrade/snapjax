@@ -120,7 +120,7 @@ def step_loss(
 
 @jax.jit
 def mask_by_it(i_t: BCOO, j_t: BCOO):
-    mask = (jnp.abs(i_t.data) > 0.0).astype(jnp.float32)
+    mask = (jnp.abs(i_t.data) > 0.0).astype(i_t.data.dtype)
 
     # It does introduce explicit zeros in the BCOO
     # but is fine for our puposes.
@@ -168,7 +168,7 @@ def update_cell_jacobians(
                 J_t_prev,
             )
             mask = jax.tree_map(
-                lambda matrix: (jnp.abs(matrix) > 0.0).astype(jnp.float32),
+                lambda matrix: (jnp.abs(matrix) > 0.0).astype(matrix.dtype),
                 I_t,
             )
             J_t = jax.tree_map(lambda mask, j_t: mask * j_t, mask, J_t)
@@ -255,8 +255,8 @@ def forward_rtrl(
     h_prev: Array,
     input: Array,
     target: Array,
-    use_snap_1: bool = False,
     sp_projection_tree: RTRLStacked = None,
+    use_snap_1: bool = False,
 ):
     theta_rtrl, theta_spatial = eqx.partition(
         model,
@@ -313,9 +313,9 @@ def rtrl(
     model: RTRLStacked,
     inputs: Array,
     targets: Array,
+    sp_projection_tree: RTRLStacked = None,
     use_scan: bool = True,
     use_snap_1: bool = False,
-    sp_projection_tree: RTRLStacked = None,
 ):
     def forward_repack(carry, data):
         input, target = data
@@ -328,8 +328,8 @@ def rtrl(
             h_prev,
             input,
             target,
-            use_snap_1=use_snap_1,
             sp_projection_tree=sp_projection_tree,
+            use_snap_1=use_snap_1,
         )
         h_t, acc_grads, jacobians_t, loss_t, y_hat = out
         acc_loss = acc_loss + loss_t

@@ -10,3 +10,4 @@ struct CSRAndDenseDescriptor{
 };
 
 void spp_mat_mul(cudaStream_t stream, void **buffers, const char *opaque, std::size_t opaque_len);
+void spp_mat_mul_double(cudaStream_t stream, void **buffers, const char *opaque, std::size_t opaque_len);

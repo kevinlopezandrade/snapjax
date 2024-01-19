@@ -248,10 +248,17 @@ def _spp_csr_matmul_cuda_lowering(ctx, data, cols, indptr, RHS, sp):
         RHS_type.shape[1],
     )
 
+    if ctx.avals_in[0].dtype == jnp.float32:
+        op_name = b"spp_csr_matmul_cuda"
+    elif ctx.avals_in[0].dtype == jnp.float64:
+        op_name = b"spp_csr_matmul_cuda_double"
+    else:
+        raise ValueError("Dtype not supported")
+
     out_shape = (sp_type.shape[0],)
 
     out = mlir.custom_call(
-        b"spp_csr_matmul_cuda",
+        op_name,
         result_types=[ir.RankedTensorType.get(out_shape, data_type.element_type)],
         operands=[
             data,

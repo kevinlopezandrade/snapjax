@@ -23,6 +23,7 @@ nanobind::bytes PackDescriptor(const T& descriptor) {
 nanobind::dict Registrations() {
     nanobind::dict dict;
     dict["spp_csr_matmul_cuda"] = EncapsulateFunction(spp_mat_mul);
+    dict["spp_csr_matmul_cuda_double"] = EncapsulateFunction(spp_mat_mul_double);
     return dict;
 }
 
