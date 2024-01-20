@@ -87,6 +87,7 @@ def _expand_jacrev_jac(
     compressed_jac: jnp.ndarray,
     output_coloring: jnp.ndarray,
     sparsity: BCOOStructure,
+    transpose: bool = False,
 ) -> jsparse.BCOO:
     """Expands an output-compressed Jacobian into a sparse matrix.
 
@@ -102,17 +103,26 @@ def _expand_jacrev_jac(
     assert compressed_jac.ndim == 2
     assert output_coloring.ndim == 1
     assert sparsity.shape == (output_coloring.size, compressed_jac.shape[1])
-    row, col = sparsity.indices_csc.T
+    if transpose:
+        indices = sparsity.indices_csc
+        shape = sparsity.shape[::-1]
+    else:
+        indices = sparsity.indices_csr
+        shape = sparsity.shape
+
+    row, col = indices.T
     compressed_index = (output_coloring[row], col)
     data = compressed_jac[compressed_index]
 
     # Indices are choosen from the csc ordering
     # which is not sorted by the row indices, rather
     # by the column indices.
-    indices_T = sparsity.indices_csc[:, ::-1]
+    if transpose:
+        indices = sparsity.indices_csc[:, ::-1]
+
     return jsparse.BCOO(
-        (data, indices_T),
-        shape=sparsity.shape[::-1],  # For the tranpose.
+        (data, indices),
+        shape=shape,
         indices_sorted=True,
         unique_indices=True,
     )
@@ -207,7 +217,7 @@ def sp_projection_tree(sparse_patterns: PyTree) -> PyTree:
     return res
 
 
-def apply_sp_pullback(pullback, sp: SparseProjection):
+def apply_sp_pullback(pullback, sp: SparseProjection, transpose: bool = False):
     """
     Computes the sparse jacobian using the projection matrix using
     the pullback (jvp).
@@ -221,10 +231,14 @@ def apply_sp_pullback(pullback, sp: SparseProjection):
     # returns 3d arrays.
     compressed_jacobian = compressed_jacobian.reshape(compressed_jacobian.shape[0], -1)
 
-    return _expand_jacrev_jac(compressed_jacobian, sp.output_coloring, sp.sparse_def)
+    return _expand_jacrev_jac(
+        compressed_jacobian, sp.output_coloring, sp.sparse_def, transpose
+    )
 
 
-def sp_jacrev(fun: Callable[[PyTree], PyTree], V: PyTree) -> PyTree:
+def sp_jacrev(
+    fun: Callable[[PyTree], PyTree], V: PyTree, transpose: bool = False
+) -> PyTree:
     """
     Retruns a function that will compute the jacobian of fun w.r.t
     to its first positional argument, making use of the sparsity
@@ -236,12 +250,13 @@ def sp_jacrev(fun: Callable[[PyTree], PyTree], V: PyTree) -> PyTree:
             of fun. Each leaf of the PyTree must be a SparseProjection
             leaf.
     """
+    apply_pullback = jtu.Partial(apply_sp_pullback, transpose=transpose)
 
     def _sp_jacfun(primal_tree):
         tree_pullback = tree_vjp(fun, primal_tree)
 
         tree_sp_jacobians = jtu.tree_map(
-            apply_sp_pullback,
+            apply_pullback,
             tree_pullback,
             V,
             is_leaf=lambda node: isinstance(node, jtu.Partial),

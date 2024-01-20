@@ -39,6 +39,7 @@ class RTRLCell(eqx.Module):
 class RTRLLayer(eqx.Module):
     """
     s_(t), theta_t, y_(t) = f(s_(t-1), x(t))
+    where theta_t = (jacobians, dynamics).
     """
 
     cell: eqx.AbstractVar[RTRLCell]
@@ -51,6 +52,10 @@ class RTRLLayer(eqx.Module):
         perturbation: Array,
         sp_projection_cell: RTRLCell = None,
     ) -> Tuple[State, Jacobians, Array]:
+        """
+        If sp_projection_cell is not None, then the sparse jacobians must be
+        returned as transposed jacobians for efficieny in the algorithm.
+        """
         ...
 
 

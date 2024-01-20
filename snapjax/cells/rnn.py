@@ -139,7 +139,9 @@ class RNNLayer(RTRLLayer):
         # Compute Jacobian and dynamics
         if sp_projection_cell:
             sp_jacobian_fun = sp_jacrev(
-                jtu.Partial(RNN.f, state=state, input=input), sp_projection_cell
+                jtu.Partial(RNN.f, state=state, input=input),
+                sp_projection_cell,
+                transpose=True,
             )
             inmediate_jacobian = sp_jacobian_fun(self.cell)
             dynamics_fun = jax.jacrev(RNN.f, argnums=1)

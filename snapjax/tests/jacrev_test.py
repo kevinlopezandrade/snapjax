@@ -18,7 +18,7 @@ _SIZE = 50
 class sparsejac:
     @staticmethod
     def jacrev(fn, sparsity):
-        jac_fun = sp_jacrev(fn, sp_projection_tree(sparsity))
+        jac_fun = sp_jacrev(fn, sp_projection_tree(sparsity), transpose=True)
 
         def f(x):
             tree = jac_fun(x)
