@@ -15,7 +15,8 @@ from jaxtyping import Array, PyTree
 
 
 class BCOOStructure(eqx.Module):
-    indices: Array
+    indices_csr: Array
+    indices_csc: Array
     nse: int = eqx.field(static=True)
     shape: Sequence[int] = eqx.field(static=True)
 
@@ -96,15 +97,25 @@ def _expand_jacrev_jac(
             Jacobian is nonzero.
 
     Returns:
-        The sparse Jacobian matrix.
+        The sparse Jacobian matrix TRANSPOSED.
     """
     assert compressed_jac.ndim == 2
     assert output_coloring.ndim == 1
     assert sparsity.shape == (output_coloring.size, compressed_jac.shape[1])
-    row, col = sparsity.indices.T
+    row, col = sparsity.indices_csc.T
     compressed_index = (output_coloring[row], col)
     data = compressed_jac[compressed_index]
-    return jsparse.BCOO((data, sparsity.indices), shape=sparsity.shape)
+
+    # Indices are choosen from the csc ordering
+    # which is not sorted by the row indices, rather
+    # by the column indices.
+    indices_T = sparsity.indices_csc[:, ::-1]
+    return jsparse.BCOO(
+        (data, indices_T),
+        shape=sparsity.shape[::-1],  # For the tranpose.
+        indices_sorted=True,
+        unique_indices=True,
+    )
 
 
 def flatten_function(fun, in_tree):
@@ -180,8 +191,10 @@ def sp_projection_matrices(sparse_patterns: PyTree) -> PyTree:
 
         # We dont' need the data for the sparsity, only their structure.
         # HACK: Create an appropiate data structure for this.
+        indices_csr = sparsity.indices
+        indices_csc = indices_csr[jnp.lexsort(indices_csr.T)]
         sparsity_structure = BCOOStructure(
-            sparsity.indices, sparsity.nse, sparsity.shape
+            indices_csr, indices_csc, sparsity.nse, sparsity.shape
         )
         return SparseProjection(projection_matrix, output_coloring, sparsity_structure)
 
