@@ -164,7 +164,7 @@ def tree_vjp(fun, primal_tree: PyTree) -> PyTree:
     return jtu.tree_unflatten(in_tree, primals_vjp)
 
 
-def sp_projection_matrices(sparse_patterns: PyTree) -> PyTree:
+def sp_projection_tree(sparse_patterns: PyTree) -> PyTree:
     """
     Given a PyTree with sparse_patterns in BCOO format, it computes per leaf
     the structural orthogonal rows using a graph coloring algorithm, and the

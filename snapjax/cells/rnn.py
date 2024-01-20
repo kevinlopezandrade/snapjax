@@ -9,7 +9,7 @@ from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray
 
 from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
-from snapjax.sp_jacrev import sp_jacrev, sp_projection_matrices
+from snapjax.sp_jacrev import sp_jacrev, sp_projection_tree
 
 
 class RNN(RTRLCell):

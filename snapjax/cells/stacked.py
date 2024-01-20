@@ -13,7 +13,7 @@ from snapjax.cells.base import (
     State,
     is_rtrl_cell,
 )
-from snapjax.sp_jacrev import sp_projection_matrices
+from snapjax.sp_jacrev import sp_projection_tree
 
 
 class Stacked(RTRLStacked):
@@ -86,7 +86,7 @@ class Stacked(RTRLStacked):
 
         with jax.default_device(jax.devices("cpu")[0]):
             sp_tree = jtu.tree_map(
-                lambda cell: sp_projection_matrices(cell.make_sp_pattern(cell)),
+                lambda cell: sp_projection_tree(cell.make_sp_pattern(cell)),
                 cells,
                 is_leaf=is_rtrl_cell,
             )
