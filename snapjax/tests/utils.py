@@ -23,13 +23,11 @@ def get_stacked_rnn(
 
     layer_args = {
         "hidden_size": hidden_size,
-        "input_size": hidden_size,
+        "input_size": input_size,
     }
 
     theta = Stacked(
         RNNLayer,
-        d_inp=input_size,
-        d_out=input_size,
         num_layers=num_layers,
         cls_kwargs=layer_args,
         key=jrandom.PRNGKey(key),
@@ -44,7 +42,7 @@ def get_random_sequence(T: int, model: Stacked, seed: int | None = None):
     else:
         key = seed
 
-    inputs = jrandom.normal(jrandom.PRNGKey(key), shape=(T, model.d_inp))
+    inputs = jrandom.normal(jrandom.PRNGKey(key), shape=(T, model.layers[0].d_inp))
 
     return inputs
 
@@ -55,7 +53,9 @@ def get_random_batch(N: int, T: int, model: Stacked, seed: int | None = None):
     else:
         key = seed
 
-    batch_inputs = jrandom.normal(jrandom.PRNGKey(key), shape=(N, T, model.d_inp))
+    batch_inputs = jrandom.normal(
+        jrandom.PRNGKey(key), shape=(N, T, model.layers[0].d_inp)
+    )
 
     return batch_inputs
 

@@ -263,13 +263,12 @@ def make_perturbations(model: RTRLStacked):
 # This should be a pure function.
 def forward_rtrl(
     model: RTRLStacked,
-    acc_grads: RTRLStacked,
     jacobians_prev: RTRLStacked,
-    h_prev: Array,
+    h_prev: Sequence[State],
     input: Array,
     target: Array,
-    loss: Callable[[Array, Array], Array] = sum_squares_loss,
     sp_projection_tree: RTRLStacked = None,
+    loss: Callable[[Array, Array], Array] = sum_squares_loss,
     use_snap_1: bool = False,
 ):
     theta_rtrl, theta_spatial = eqx.partition(
@@ -304,16 +303,11 @@ def forward_rtrl(
         spatial_grads, hidden_states_grads, jacobians, sparse=sparse
     )
 
-    # Reshape is needed in the addition since I flattened the arrays
-    # to use the new primitive with a BCOO matrix of only 2 dimensions.
-    # For non-sparse reshapes does not do anything.
-    acc_grads = jax.tree_map(
-        lambda acc_grad, grad: acc_grad + grad.reshape(acc_grad.shape),
-        acc_grads,
-        grads,
-    )
+    # Reshape the flattened gradients of the RTRL cells.
+    if sparse:
+        grads = jtu.tree_map(lambda mat, grad: grad.reshape(mat.shape), model, grads)
 
-    return h_t, acc_grads, jacobians, loss_t, y_hat
+    return h_t, grads, jacobians, loss_t, y_hat
 
 
 def init_state(model: RTRLStacked):
@@ -340,16 +334,19 @@ def rtrl(
 
         out = forward_rtrl(
             model,
-            acc_grads,
             jacobians_prev,
             h_prev,
             input,
             target,
             sp_projection_tree=sp_projection_tree,
             use_snap_1=use_snap_1,
+            loss=loss,
         )
-        h_t, acc_grads, jacobians_t, loss_t, y_hat = out
+        h_t, grads, jacobians_t, loss_t, y_hat = out
         acc_loss = acc_loss + loss_t
+        acc_grads = jtu.tree_map(
+            lambda acc_grads, grads: acc_grads + grads, acc_grads, grads
+        )
 
         return (h_t, acc_grads, jacobians_t, acc_loss), y_hat
 
@@ -384,7 +381,7 @@ def rtrl(
 
 def forward_sequence(model: RTRLStacked, inputs: Array, use_scan: bool = True):
     hidden_state = init_state(model)
-    perturbations = jnp.zeros(shape=(model.num_layers, model.d_inp))
+    perturbations = make_perturbations(model)
 
     def f_repack(state: Sequence[State], input: Array):
         h, _, out = model.f(state, input, perturbations)
