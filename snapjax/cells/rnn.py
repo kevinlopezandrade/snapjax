@@ -61,7 +61,7 @@ class RNN(RTRLCell):
         h = state
         x = input
 
-        h_new = jnp.tanh(self.weights_hh @ h) + (self.weights_ih @ x) + bias
+        h_new = jnp.tanh(self.weights_hh @ h + self.weights_ih @ x + bias)
 
         return h_new
 
@@ -109,6 +109,8 @@ class RNNLayer(RTRLLayer):
     cell: RNN
     C: eqx.nn.Linear
     D: eqx.nn.Linear
+    d_inp: int = eqx.field(static=True)
+    d_out: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -121,7 +123,10 @@ class RNNLayer(RTRLLayer):
         cell_key, c_key, d_key = jax.random.split(key, 3)
         self.cell = RNN(hidden_size, input_size, use_bias=use_bias, key=cell_key)
         self.C = eqx.nn.Linear(hidden_size, hidden_size, use_bias=False, key=c_key)
-        self.D = eqx.nn.Linear(hidden_size, input_size, use_bias=False, key=d_key)
+        self.D = eqx.nn.Linear(input_size, hidden_size, use_bias=False, key=d_key)
+
+        self.d_inp = input_size
+        self.d_out = hidden_size
 
     def f(
         self,
