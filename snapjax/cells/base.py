@@ -5,7 +5,7 @@ import equinox as eqx
 from jaxtyping import Array
 
 State = Sequence[Array]
-Jacobians = Tuple["RTRLCell", Sequence[Array]]
+Jacobians = Tuple["RTRLCell", Array]  # I_t, D_t
 
 
 class RTRLCell(eqx.Module):
@@ -27,7 +27,7 @@ class RTRLCell(eqx.Module):
 
     @staticmethod
     @abstractmethod
-    def make_zero_jacobians(cell: "RTRLCell") -> Jacobians:
+    def make_zero_jacobians(cell: "RTRLCell") -> "RTRLCell":
         ...
 
     @staticmethod

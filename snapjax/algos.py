@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, List, Sequence, Tuple, cast
+from typing import Any, Callable, List, Sequence, Tuple, cast
 
 import equinox as eqx
 import jax
@@ -7,13 +7,17 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from jax import config
 from jax.experimental.sparse import BCOO, BCSR
-from jaxtyping import Array
+from jaxtyping import Array, Scalar
 
 from snapjax.cells.base import RTRLCell, RTRLStacked, State, is_rtrl_cell
 from snapjax.sp_jacrev import SparseProjection
 from snapjax.spp_primitives.primitives import spp_csr_matmul
 
 config.update("jax_numpy_rank_promotion", "raise")
+
+
+def sum_squares_loss(y: Array, y_hat: Array):
+    return jnp.sum((y - y_hat) ** 2)
 
 
 @jax.jit
@@ -95,7 +99,7 @@ def make_zeros_grads(model: RTRLStacked):
     return zero_grads
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=["loss"])
 def step_loss(
     model_spatial: RTRLStacked,
     model_rtrl: RTRLStacked,
@@ -104,15 +108,16 @@ def step_loss(
     perturbations: Array,
     y_t: Array,
     sp_projection_tree: RTRLStacked = None,
+    loss: Callable[[Array, Array], Array] = sum_squares_loss,
 ):
     model = eqx.combine(model_spatial, model_rtrl)
     h_t, inmediate_jacobians, y_hat = model.f(
         h_prev, x_t, perturbations, sp_projection_tree
     )
 
-    diff = (y_t - y_hat) ** 2
+    res = loss(y_t, y_hat)
 
-    return jnp.sum(diff), (h_t, y_hat, inmediate_jacobians)
+    return res, (h_t, y_hat, inmediate_jacobians)
 
 
 @jax.jit
@@ -263,6 +268,7 @@ def forward_rtrl(
     h_prev: Array,
     input: Array,
     target: Array,
+    loss: Callable[[Array, Array], Array] = sum_squares_loss,
     sp_projection_tree: RTRLStacked = None,
     use_snap_1: bool = False,
 ):
@@ -271,7 +277,9 @@ def forward_rtrl(
         lambda leaf: is_rtrl_cell(leaf),
         is_leaf=is_rtrl_cell,
     )
-    step_loss_and_grad = jax.value_and_grad(step_loss, argnums=(0, 4), has_aux=True)
+    step_loss_and_grad = jax.value_and_grad(
+        jtu.Partial(step_loss, loss=loss), argnums=(0, 4), has_aux=True
+    )
     perturbations = make_perturbations(theta_rtrl)
 
     (loss_t, aux), (grads) = step_loss_and_grad(
@@ -322,6 +330,7 @@ def rtrl(
     inputs: Array,
     targets: Array,
     sp_projection_tree: RTRLStacked = None,
+    loss: Callable[[Array, Array], Scalar] = sum_squares_loss,
     use_scan: bool = True,
     use_snap_1: bool = False,
 ):

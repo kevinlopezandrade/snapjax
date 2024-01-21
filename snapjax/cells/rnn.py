@@ -147,7 +147,7 @@ class RNNLayer(RTRLLayer):
             dynamics_fun = jax.jacrev(RNN.f, argnums=1)
             dynamics = dynamics_fun(self.cell, state, input)
         else:
-            jacobian_func = jax.jit(jax.jacrev(RNN.f, argnums=(0, 1)))
+            jacobian_func = jax.jacrev(RNN.f, argnums=(0, 1))
             inmediate_jacobian, dynamics = jacobian_func(self.cell, state, input)
 
         # Project out
