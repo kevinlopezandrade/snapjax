@@ -1,95 +1,87 @@
 from typing import Sequence, Tuple
 
 import equinox as eqx
+import equinox.nn as nn
 import jax
 import jax.numpy as jnp
+import jax.random as jrandom
 import jax.tree_util as jtu
 import numpy as np
 from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray
 
 from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
+from snapjax.cells.rnn import RNN
 from snapjax.sp_jacrev import sp_jacrev, sp_projection_tree
 
 
-class RNN(RTRLCell):
-    weights_hh: eqx.nn.Linear
-    weights_ih: eqx.nn.Linear
+class GRU(RTRLCell):
+    """
+    Gated recurrent unit from Engel[10] which allows
+    I_t being sparse.
+    """
+
+    W_iz: nn.Linear
+    W_hz: nn.Linear
+    W_hr: nn.Linear
+    W_ir: nn.Linear
+    W_ia: nn.Linear
+    W_ha: nn.Linear
     input_size: int = eqx.field(static=True)
     hidden_size: int = eqx.field(static=True)
-    use_bias: bool = eqx.field(static=True)
 
     def __init__(
         self,
         hidden_size: int,
         input_size: int,
-        use_bias: bool = True,
         *,
         key: PRNGKeyArray,
     ):
-        hhkey, ihkey, bkey = jax.random.split(key, 3)
+        keys = jrandom.split(key, 6)
+        self.W_iz = nn.Linear(input_size, hidden_size, use_bias=False, key=keys[0])
+        self.W_hz = nn.Linear(hidden_size, hidden_size, use_bias=True, key=keys[1])
+        self.W_ir = nn.Linear(input_size, hidden_size, use_bias=False, key=keys[2])
+        self.W_hr = nn.Linear(hidden_size, hidden_size, use_bias=True, key=keys[3])
+        self.W_ia = nn.Linear(input_size, hidden_size, use_bias=False, key=keys[4])
+        self.W_ha = nn.Linear(hidden_size, hidden_size, use_bias=True, key=keys[5])
 
-        self.weights_hh = eqx.nn.Linear(
-            hidden_size, hidden_size, use_bias=use_bias, key=hhkey
-        )
-        self.weights_ih = eqx.nn.Linear(
-            input_size, hidden_size, use_bias=False, key=ihkey
-        )
-
-        self.hidden_size = hidden_size
         self.input_size = input_size
-        self.use_bias = use_bias
+        self.hidden_size = hidden_size
 
-    def f(self, state: Sequence[Array], input: Array) -> Array:
+    def f(self, state: State, input: Array) -> State:
         h = state
         x = input
 
-        h_new = jnp.tanh(self.weights_hh(h) + self.weights_ih(x))
+        z = jax.nn.sigmoid(self.W_iz(x) + self.W_hz(h))
+        r = jax.nn.sigmoid(self.W_ir(x) + self.W_hr(h))
+        a = jax.nn.tanh(self.W_ia(x) + r * self.W_ha(h))
+
+        h_new = (1 - z) * h + z * a
 
         return h_new
 
     @staticmethod
-    def init_state(cell: "RNN"):
+    def init_state(cell: "GRU"):
         return jnp.zeros(cell.hidden_size)
 
     @staticmethod
-    def make_zero_jacobians(cell: "RNN"):
+    def make_zero_jacobians(cell: "GRU"):
         zero_jacobians = jtu.tree_map(
             lambda leaf: jnp.zeros((cell.hidden_size, *leaf.shape)), cell
         )
         return zero_jacobians
 
     @staticmethod
-    def make_sp_pattern(cell: "RNN"):
-        h = cell.hidden_size
-
-        def _build_jacobian_bcoo(leaf):
-            if leaf.ndim == 1:
-                return BCOO.fromdense(jnp.eye(h, dtype=jnp.int32))
-            else:
-                data = np.ones(h * h, dtype=np.int32)
-                indices = np.zeros((h * h, 2), dtype=np.int32)
-                for i in range(h):
-                    indices[(i * h) : (i + 1) * h, 0] = np.repeat(i, h)
-                    indices[(i * h) : (i + 1) * h, 1] = np.arange(h) + (i * h)
-
-                data = jnp.array(data)
-                indices = jnp.array(indices)
-                res = BCOO(
-                    (data, indices),
-                    shape=(h, h * h),
-                    indices_sorted=True,
-                    unique_indices=True,
-                )
-                return res
-
-        sp = jtu.tree_map(lambda leaf: _build_jacobian_bcoo(leaf), cell)
-
-        return sp
+    def make_sp_pattern(cell: "GRU"):
+        """
+        The sparsity pattern of this Engel GRU
+        matches the sparsity of the RNN as well.
+        """
+        return RNN.make_sp_pattern(cell)
 
 
-class RNNLayer(RTRLLayer):
-    cell: RNN
+class GRULayer(RTRLLayer):
+    cell: GRU
     C: eqx.nn.Linear
     D: eqx.nn.Linear
     d_inp: int = eqx.field(static=True)
@@ -104,7 +96,7 @@ class RNNLayer(RTRLLayer):
         key: PRNGKeyArray,
     ):
         cell_key, c_key, d_key = jax.random.split(key, 3)
-        self.cell = RNN(hidden_size, input_size, use_bias=use_bias, key=cell_key)
+        self.cell = GRU(hidden_size, input_size, key=cell_key)
         self.C = eqx.nn.Linear(hidden_size, hidden_size, use_bias=False, key=c_key)
         self.D = eqx.nn.Linear(input_size, hidden_size, use_bias=False, key=d_key)
 
@@ -121,21 +113,20 @@ class RNNLayer(RTRLLayer):
         """
         Returns h_(t), y_(t)
         """
-        # To the RNN Cell
         h_out = self.cell.f(state, input) + perturbation
 
         # Compute Jacobian and dynamics
         if sp_projection_cell:
             sp_jacobian_fun = sp_jacrev(
-                jtu.Partial(RNN.f, state=state, input=input),
+                jtu.Partial(GRU.f, state=state, input=input),
                 sp_projection_cell,
                 transpose=True,
             )
             inmediate_jacobian = sp_jacobian_fun(self.cell)
-            dynamics_fun = jax.jacrev(RNN.f, argnums=1)
+            dynamics_fun = jax.jacrev(GRU.f, argnums=1)
             dynamics = dynamics_fun(self.cell, state, input)
         else:
-            jacobian_func = jax.jacrev(RNN.f, argnums=(0, 1))
+            jacobian_func = jax.jacrev(GRU.f, argnums=(0, 1))
             inmediate_jacobian, dynamics = jacobian_func(self.cell, state, input)
 
         # Project out

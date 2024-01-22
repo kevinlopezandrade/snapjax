@@ -4,6 +4,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
+from jaxtyping import Array
 
 from snapjax.cells.base import is_rtrl_cell
 from snapjax.cells.rnn import RNN, RNNLayer
@@ -23,13 +24,11 @@ def get_stacked_rnn(
 
     layer_args = {
         "hidden_size": hidden_size,
-        "input_size": hidden_size,
+        "input_size": input_size,
     }
 
     theta = Stacked(
         RNNLayer,
-        d_inp=input_size,
-        d_out=input_size,
         num_layers=num_layers,
         cls_kwargs=layer_args,
         key=jrandom.PRNGKey(key),
@@ -44,7 +43,7 @@ def get_random_sequence(T: int, model: Stacked, seed: int | None = None):
     else:
         key = seed
 
-    inputs = jrandom.normal(jrandom.PRNGKey(key), shape=(T, model.d_inp))
+    inputs = jrandom.normal(jrandom.PRNGKey(key), shape=(T, model.layers[0].d_inp))
 
     return inputs
 
@@ -55,7 +54,9 @@ def get_random_batch(N: int, T: int, model: Stacked, seed: int | None = None):
     else:
         key = seed
 
-    batch_inputs = jrandom.normal(jrandom.PRNGKey(key), shape=(N, T, model.d_inp))
+    batch_inputs = jrandom.normal(
+        jrandom.PRNGKey(key), shape=(N, T, model.layers[0].d_inp)
+    )
 
     return batch_inputs
 
@@ -63,6 +64,13 @@ def get_random_batch(N: int, T: int, model: Stacked, seed: int | None = None):
 def replace_rnn_with_diagonals(model: Stacked):
     # Replace by diagonal matrices.
     # Ugly but works.
+    # Hack for the nn.RNN
+    class MatrixCallable(eqx.Module):
+        W: Array
+
+        def __call__(self, x):
+            return self.W @ x
+
     leafs, tree_def = jtu.tree_flatten(model, is_leaf=is_rtrl_cell)
     key = jrandom.PRNGKey(7)
     for i, leaf in enumerate(leafs):
@@ -74,14 +82,14 @@ def replace_rnn_with_diagonals(model: Stacked):
             cell = eqx.tree_at(
                 lambda leaf: leaf.weights_hh,
                 leaf,
-                jnp.fill_diagonal(I, diag_hh, inplace=False),
+                MatrixCallable(jnp.fill_diagonal(I, diag_hh, inplace=False)),
             )
 
             diag_ih = jrandom.normal(subkeys[1], (leaf.hidden_size,))
             cell = eqx.tree_at(
                 lambda cell: cell.weights_ih,
                 cell,
-                jnp.fill_diagonal(I, diag_ih, inplace=False),
+                MatrixCallable(jnp.fill_diagonal(I, diag_ih, inplace=False)),
             )
 
             leafs[i] = cell

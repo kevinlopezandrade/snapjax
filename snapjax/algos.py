@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, List, Sequence, Tuple, cast
+from typing import Any, Callable, List, Sequence, Tuple, cast
 
 import equinox as eqx
 import jax
@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from jax import config
 from jax.experimental.sparse import BCOO, BCSR
-from jaxtyping import Array
+from jaxtyping import Array, Scalar
 
 from snapjax.cells.base import RTRLCell, RTRLStacked, State, is_rtrl_cell
 from snapjax.sp_jacrev import SparseProjection
@@ -16,22 +16,21 @@ from snapjax.spp_primitives.primitives import spp_csr_matmul
 config.update("jax_numpy_rank_promotion", "raise")
 
 
+def sum_squares_loss(y: Array, y_hat: Array):
+    return jnp.sum((y - y_hat) ** 2)
+
+
 @jax.jit
-def dense_coo_product(D: Array, J: BCOO, sp: Array):
-    orig_shape = J.shape
-    J = J.transpose()
+def dense_coo_product(D: Array, J_T: BCOO, sp_T: Array):
+    orig_shape = J_T.shape
 
     # TO CSR
-    J = BCSR.from_bcoo(J)
-    D = D.T
-    # Transpose also the sparsity pattern.
-    sp_T = sp.at[:, 0].set(sp[:, 1])
-    sp_T = sp_T.at[:, 1].set(sp[:, 0])
+    J_T = BCSR.from_bcoo(J_T)
+    D_T = D.T
 
-    data = spp_csr_matmul(J.data, J.indices, J.indptr, D, sp_T)
+    data = spp_csr_matmul(J_T.data, J_T.indices, J_T.indptr, D_T, sp_T)
 
-    # No need to do the transpose since, sp is already in the shape we want.
-    return BCOO((data, sp), shape=orig_shape, indices_sorted=True, unique_indices=True)
+    return BCOO((data, sp_T), shape=J_T.shape, indices_sorted=True, unique_indices=True)
 
 
 @jax.jit
@@ -47,15 +46,17 @@ def sparse_matching_addition(A: BCOO, B: BCOO) -> BCOO:
 
 
 def _make_zeros_jacobians_bcco(sp_projection_tree: RTRLStacked):
+    # Jacobians are saved as the tranpose jacobians.
     def _sparse_jacobian(leaf: SparseProjection):
         zeros = jnp.zeros(leaf.sparse_def.nse)
-        indices = leaf.sparse_def.indices
+        indices = leaf.sparse_def.indices_csc[:, ::-1]  # For the transpose.
         structure = (zeros, indices)
         return BCOO(
             structure,
-            shape=leaf.sparse_def.shape,
-            indices_sorted=True,  # This is guaranteed in if sparse_def
-            unique_indices=True,  # is properly constructed.
+            shape=leaf.sparse_def.shape[::-1],  # For the transpose.
+            # This is guaranteed since csc arse sorted by colum and we transpose.
+            indices_sorted=True,
+            unique_indices=True,
         )
 
     zero_jacobians = jtu.tree_map(
@@ -98,7 +99,7 @@ def make_zeros_grads(model: RTRLStacked):
     return zero_grads
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=["loss"])
 def step_loss(
     model_spatial: RTRLStacked,
     model_rtrl: RTRLStacked,
@@ -107,15 +108,16 @@ def step_loss(
     perturbations: Array,
     y_t: Array,
     sp_projection_tree: RTRLStacked = None,
+    loss: Callable[[Array, Array], Array] = sum_squares_loss,
 ):
     model = eqx.combine(model_spatial, model_rtrl)
     h_t, inmediate_jacobians, y_hat = model.f(
         h_prev, x_t, perturbations, sp_projection_tree
     )
 
-    diff = (y_t - y_hat) ** 2
+    res = loss(y_t, y_hat)
 
-    return jnp.sum(diff), (h_t, y_hat, inmediate_jacobians)
+    return res, (h_t, y_hat, inmediate_jacobians)
 
 
 @jax.jit
@@ -133,18 +135,24 @@ def mask_by_it(i_t: BCOO, j_t: BCOO):
 
 
 @jax.jit
-def sparse_update(I_t: RTRLCell, dynamics: Array, J_t_prev: RTRLCell):
-    def _update_rtrl_bcco(i_t: BCOO, j_t_prev: BCOO) -> BCOO:
-        prod = dense_coo_product(dynamics, j_t_prev, j_t_prev.indices)
+def sparse_update(I_t_T: RTRLCell, dynamics: Array, J_t_prev_T: RTRLCell):
+    """
+    Returns the I + D*J(t_1) tranposed.
+    """
+
+    def _update_rtrl_bcco(i_t: BCOO, j_t_prev_T: BCOO) -> BCOO:
+        prod = dense_coo_product(dynamics, j_t_prev_T, j_t_prev_T.indices)
         return sparse_matching_addition(i_t, prod)
 
-    J_t = jax.tree_map(
-        lambda i_t, j_t_prev: mask_by_it(i_t, _update_rtrl_bcco(i_t, j_t_prev)),
-        I_t,
-        J_t_prev,
+    J_t_T = jax.tree_map(
+        lambda i_t_T, j_t_prev_T: mask_by_it(
+            i_t_T, _update_rtrl_bcco(i_t_T, j_t_prev_T)
+        ),
+        I_t_T,
+        J_t_prev_T,
         is_leaf=lambda node: isinstance(node, BCOO),
     )
-    return J_t
+    return J_t_T
 
 
 @partial(jax.jit, static_argnums=(3, 4))
@@ -158,8 +166,8 @@ def update_cell_jacobians(
     # RTRL
     if use_snap_1:
         if sparse:
-            J_t = sparse_update(I_t, dynamics, J_t_prev)
-            return J_t
+            J_t_T = sparse_update(I_t, dynamics, J_t_prev)
+            return J_t_T
         else:
             # The theoretical one from the paper.
             J_t = jax.tree_map(
@@ -221,9 +229,14 @@ def update_rtrl_cells_grads(
 
     for i in range(grads.num_layers):
         ht_grad = hidden_states_grads[i]
+        if sparse:
+            matmul_by_h = jtu.Partial(lambda a, b: (b @ a.T).T, ht_grad)
+        else:
+            matmul_by_h = jtu.Partial(lambda a, b: a @ b, ht_grad)
+
         rtrl_cell_jac = jacobians.layers[i].cell
         rtrl_cell_grads = jax.tree_map(
-            lambda jacobian: ht_grad @ jacobian,
+            lambda jacobian: matmul_by_h(jacobian),
             rtrl_cell_jac,
             is_leaf=_leaf_function(sparse),
         )
@@ -250,12 +263,12 @@ def make_perturbations(model: RTRLStacked):
 # This should be a pure function.
 def forward_rtrl(
     model: RTRLStacked,
-    acc_grads: RTRLStacked,
     jacobians_prev: RTRLStacked,
-    h_prev: Array,
+    h_prev: Sequence[State],
     input: Array,
     target: Array,
     sp_projection_tree: RTRLStacked = None,
+    loss: Callable[[Array, Array], Array] = sum_squares_loss,
     use_snap_1: bool = False,
 ):
     theta_rtrl, theta_spatial = eqx.partition(
@@ -263,7 +276,9 @@ def forward_rtrl(
         lambda leaf: is_rtrl_cell(leaf),
         is_leaf=is_rtrl_cell,
     )
-    step_loss_and_grad = jax.value_and_grad(step_loss, argnums=(0, 4), has_aux=True)
+    step_loss_and_grad = jax.value_and_grad(
+        jtu.Partial(step_loss, loss=loss), argnums=(0, 4), has_aux=True
+    )
     perturbations = make_perturbations(theta_rtrl)
 
     (loss_t, aux), (grads) = step_loss_and_grad(
@@ -288,16 +303,11 @@ def forward_rtrl(
         spatial_grads, hidden_states_grads, jacobians, sparse=sparse
     )
 
-    # Reshape is needed in the addition since I flattened the arrays
-    # to use the new primitive with a BCOO matrix of only 2 dimensions.
-    # For non-sparse reshapes does not do anything.
-    acc_grads = jax.tree_map(
-        lambda acc_grad, grad: acc_grad + grad.reshape(acc_grad.shape),
-        acc_grads,
-        grads,
-    )
+    # Reshape the flattened gradients of the RTRL cells.
+    if sparse:
+        grads = jtu.tree_map(lambda mat, grad: grad.reshape(mat.shape), model, grads)
 
-    return h_t, acc_grads, jacobians, loss_t, y_hat
+    return h_t, grads, jacobians, loss_t, y_hat
 
 
 def init_state(model: RTRLStacked):
@@ -314,6 +324,7 @@ def rtrl(
     inputs: Array,
     targets: Array,
     sp_projection_tree: RTRLStacked = None,
+    loss: Callable[[Array, Array], Scalar] = sum_squares_loss,
     use_scan: bool = True,
     use_snap_1: bool = False,
 ):
@@ -323,16 +334,19 @@ def rtrl(
 
         out = forward_rtrl(
             model,
-            acc_grads,
             jacobians_prev,
             h_prev,
             input,
             target,
             sp_projection_tree=sp_projection_tree,
             use_snap_1=use_snap_1,
+            loss=loss,
         )
-        h_t, acc_grads, jacobians_t, loss_t, y_hat = out
+        h_t, grads, jacobians_t, loss_t, y_hat = out
         acc_loss = acc_loss + loss_t
+        acc_grads = jtu.tree_map(
+            lambda acc_grads, grads: acc_grads + grads, acc_grads, grads
+        )
 
         return (h_t, acc_grads, jacobians_t, acc_loss), y_hat
 
@@ -367,7 +381,7 @@ def rtrl(
 
 def forward_sequence(model: RTRLStacked, inputs: Array, use_scan: bool = True):
     hidden_state = init_state(model)
-    perturbations = jnp.zeros(shape=(model.num_layers, model.d_inp))
+    perturbations = make_perturbations(model)
 
     def f_repack(state: Sequence[State], input: Array):
         h, _, out = model.f(state, input, perturbations)

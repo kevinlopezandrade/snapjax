@@ -15,7 +15,8 @@ from jaxtyping import Array, PyTree
 
 
 class BCOOStructure(eqx.Module):
-    indices: Array
+    indices_csr: Array
+    indices_csc: Array
     nse: int = eqx.field(static=True)
     shape: Sequence[int] = eqx.field(static=True)
 
@@ -86,6 +87,7 @@ def _expand_jacrev_jac(
     compressed_jac: jnp.ndarray,
     output_coloring: jnp.ndarray,
     sparsity: BCOOStructure,
+    transpose: bool = False,
 ) -> jsparse.BCOO:
     """Expands an output-compressed Jacobian into a sparse matrix.
 
@@ -96,15 +98,34 @@ def _expand_jacrev_jac(
             Jacobian is nonzero.
 
     Returns:
-        The sparse Jacobian matrix.
+        The sparse Jacobian matrix TRANSPOSED.
     """
     assert compressed_jac.ndim == 2
     assert output_coloring.ndim == 1
     assert sparsity.shape == (output_coloring.size, compressed_jac.shape[1])
-    row, col = sparsity.indices.T
+    if transpose:
+        indices = sparsity.indices_csc
+        shape = sparsity.shape[::-1]
+    else:
+        indices = sparsity.indices_csr
+        shape = sparsity.shape
+
+    row, col = indices.T
     compressed_index = (output_coloring[row], col)
     data = compressed_jac[compressed_index]
-    return jsparse.BCOO((data, sparsity.indices), shape=sparsity.shape)
+
+    # Indices are choosen from the csc ordering
+    # which is not sorted by the row indices, rather
+    # by the column indices.
+    if transpose:
+        indices = sparsity.indices_csc[:, ::-1]
+
+    return jsparse.BCOO(
+        (data, indices),
+        shape=shape,
+        indices_sorted=True,
+        unique_indices=True,
+    )
 
 
 def flatten_function(fun, in_tree):
@@ -153,7 +174,7 @@ def tree_vjp(fun, primal_tree: PyTree) -> PyTree:
     return jtu.tree_unflatten(in_tree, primals_vjp)
 
 
-def sp_projection_matrices(sparse_patterns: PyTree) -> PyTree:
+def sp_projection_tree(sparse_patterns: PyTree) -> PyTree:
     """
     Given a PyTree with sparse_patterns in BCOO format, it computes per leaf
     the structural orthogonal rows using a graph coloring algorithm, and the
@@ -180,8 +201,10 @@ def sp_projection_matrices(sparse_patterns: PyTree) -> PyTree:
 
         # We dont' need the data for the sparsity, only their structure.
         # HACK: Create an appropiate data structure for this.
+        indices_csr = sparsity.indices
+        indices_csc = indices_csr[jnp.lexsort(indices_csr.T)]
         sparsity_structure = BCOOStructure(
-            sparsity.indices, sparsity.nse, sparsity.shape
+            indices_csr, indices_csc, sparsity.nse, sparsity.shape
         )
         return SparseProjection(projection_matrix, output_coloring, sparsity_structure)
 
@@ -194,7 +217,7 @@ def sp_projection_matrices(sparse_patterns: PyTree) -> PyTree:
     return res
 
 
-def apply_sp_pullback(pullback, sp: SparseProjection):
+def apply_sp_pullback(pullback, sp: SparseProjection, transpose: bool = False):
     """
     Computes the sparse jacobian using the projection matrix using
     the pullback (jvp).
@@ -208,10 +231,14 @@ def apply_sp_pullback(pullback, sp: SparseProjection):
     # returns 3d arrays.
     compressed_jacobian = compressed_jacobian.reshape(compressed_jacobian.shape[0], -1)
 
-    return _expand_jacrev_jac(compressed_jacobian, sp.output_coloring, sp.sparse_def)
+    return _expand_jacrev_jac(
+        compressed_jacobian, sp.output_coloring, sp.sparse_def, transpose
+    )
 
 
-def sp_jacrev(fun: Callable[[PyTree], PyTree], V: PyTree) -> PyTree:
+def sp_jacrev(
+    fun: Callable[[PyTree], PyTree], V: PyTree, transpose: bool = False
+) -> PyTree:
     """
     Retruns a function that will compute the jacobian of fun w.r.t
     to its first positional argument, making use of the sparsity
@@ -223,12 +250,13 @@ def sp_jacrev(fun: Callable[[PyTree], PyTree], V: PyTree) -> PyTree:
             of fun. Each leaf of the PyTree must be a SparseProjection
             leaf.
     """
+    apply_pullback = jtu.Partial(apply_sp_pullback, transpose=transpose)
 
     def _sp_jacfun(primal_tree):
         tree_pullback = tree_vjp(fun, primal_tree)
 
         tree_sp_jacobians = jtu.tree_map(
-            apply_sp_pullback,
+            apply_pullback,
             tree_pullback,
             V,
             is_leaf=lambda node: isinstance(node, jtu.Partial),
