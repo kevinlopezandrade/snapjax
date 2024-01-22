@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Scalar
 
-from snapjax.algos import init_state, make_perturbations
+from snapjax.algos import make_init_state, make_perturbations
 from snapjax.cells.base import RTRLStacked, State
 
 
@@ -13,7 +13,7 @@ def l2_loss(inp, pred):
 
 
 def forward_sequence(model: RTRLStacked, inputs: Array, use_scan: bool = True):
-    hidden_state = init_state(model)
+    hidden_state = make_init_state(model)
 
     # Ful forward pass over the sequence.
     if use_scan:
