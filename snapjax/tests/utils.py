@@ -4,6 +4,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
+from jaxtyping import Array
 
 from snapjax.cells.base import is_rtrl_cell
 from snapjax.cells.rnn import RNN, RNNLayer
@@ -63,6 +64,13 @@ def get_random_batch(N: int, T: int, model: Stacked, seed: int | None = None):
 def replace_rnn_with_diagonals(model: Stacked):
     # Replace by diagonal matrices.
     # Ugly but works.
+    # Hack for the nn.RNN
+    class MatrixCallable(eqx.Module):
+        W: Array
+
+        def __call__(self, x):
+            return self.W @ x
+
     leafs, tree_def = jtu.tree_flatten(model, is_leaf=is_rtrl_cell)
     key = jrandom.PRNGKey(7)
     for i, leaf in enumerate(leafs):
@@ -74,14 +82,14 @@ def replace_rnn_with_diagonals(model: Stacked):
             cell = eqx.tree_at(
                 lambda leaf: leaf.weights_hh,
                 leaf,
-                jnp.fill_diagonal(I, diag_hh, inplace=False),
+                MatrixCallable(jnp.fill_diagonal(I, diag_hh, inplace=False)),
             )
 
             diag_ih = jrandom.normal(subkeys[1], (leaf.hidden_size,))
             cell = eqx.tree_at(
                 lambda cell: cell.weights_ih,
                 cell,
-                jnp.fill_diagonal(I, diag_ih, inplace=False),
+                MatrixCallable(jnp.fill_diagonal(I, diag_ih, inplace=False)),
             )
 
             leafs[i] = cell
