@@ -229,7 +229,7 @@ def update_rtrl_cells_grads(
     return grads
 
 
-@partial(jax.jit, static_argnames=["loss"])
+@partial(jax.jit, static_argnames=["loss_func"])
 def step_loss(
     model_spatial: RTRLStacked,
     model_rtrl: RTRLStacked,
@@ -238,14 +238,14 @@ def step_loss(
     perturbations: Array,
     y_t: Array,
     sp_projection_tree: RTRLStacked = None,
-    loss: Callable[[Array, Array], Array] = l2_loss,
+    loss_func: Callable[[Array, Array], Array] = l2_loss,
 ):
     model = eqx.combine(model_spatial, model_rtrl)
     h_t, inmediate_jacobians, y_hat = model.f(
         h_prev, x_t, perturbations, sp_projection_tree
     )
 
-    res = loss(y_t, y_hat)
+    res = loss_func(y_t, y_hat)
 
     return res, (h_t, y_hat, inmediate_jacobians)
 
@@ -258,7 +258,7 @@ def forward_rtrl(
     input: Array,
     target: Array,
     sp_projection_tree: RTRLStacked = None,
-    loss: Callable[[Array, Array], Array] = l2_loss,
+    loss_func: Callable[[Array, Array], Array] = l2_loss,
     use_snap_1: bool = False,
 ):
     theta_rtrl, theta_spatial = eqx.partition(
@@ -267,7 +267,7 @@ def forward_rtrl(
         is_leaf=is_rtrl_cell,
     )
     step_loss_and_grad = jax.value_and_grad(
-        jtu.Partial(step_loss, loss=loss), argnums=(0, 4), has_aux=True
+        jtu.Partial(step_loss, loss_func=loss_func), argnums=(0, 4), has_aux=True
     )
     perturbations = make_perturbations(theta_rtrl)
 
@@ -314,7 +314,7 @@ def rtrl(
     inputs: Array,
     targets: Array,
     sp_projection_tree: RTRLStacked = None,
-    loss: Callable[[Array, Array], Scalar] = l2_loss,
+    loss_func: Callable[[Array, Array], Scalar] = l2_loss,
     use_scan: bool = True,
     use_snap_1: bool = False,
 ):
@@ -330,7 +330,7 @@ def rtrl(
             target,
             sp_projection_tree=sp_projection_tree,
             use_snap_1=use_snap_1,
-            loss=loss,
+            loss_func=loss_func,
         )
         h_t, grads, jacobians_t, loss_t, y_hat = out
         acc_loss = acc_loss + loss_t
