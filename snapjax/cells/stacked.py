@@ -67,8 +67,16 @@ class Stacked(RTRLStacked):
 
         return tuple(new_state), tuple(inmediate_jacobians), out
 
+    def f_bptt(self, state: Sequence[State], input: Array) -> Tuple[State, Array]:
+        new_state: List[State] = []
+        for i, cell in enumerate(self.layers):
+            layer_state, input = cell.f_bptt(state[i], input)
+            new_state.append(layer_state)
 
-class StackedEncoderDecoder(RTRLStacked):
+        return tuple(new_state), input
+
+
+class EncoderDecoder(RTRLStacked):
     encoder: nn.Linear
     decoder: nn.Linear
     layers: List[RTRLLayer]

@@ -6,7 +6,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
-from snapjax.algos import bptt, rtrl
+from snapjax.algos import rtrl
+from snapjax.bptt import bptt
 from snapjax.tests.utils import (
     get_random_sequence,
     get_stacked_rnn,

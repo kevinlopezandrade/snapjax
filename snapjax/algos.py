@@ -16,7 +16,7 @@ from snapjax.spp_primitives.primitives import spp_csr_matmul
 config.update("jax_numpy_rank_promotion", "raise")
 
 
-def sum_squares_loss(y: Array, y_hat: Array):
+def l2_loss(y: Array, y_hat: Array):
     return jnp.sum((y - y_hat) ** 2)
 
 
@@ -108,7 +108,7 @@ def step_loss(
     perturbations: Array,
     y_t: Array,
     sp_projection_tree: RTRLStacked = None,
-    loss: Callable[[Array, Array], Array] = sum_squares_loss,
+    loss: Callable[[Array, Array], Array] = l2_loss,
 ):
     model = eqx.combine(model_spatial, model_rtrl)
     h_t, inmediate_jacobians, y_hat = model.f(
@@ -268,7 +268,7 @@ def forward_rtrl(
     input: Array,
     target: Array,
     sp_projection_tree: RTRLStacked = None,
-    loss: Callable[[Array, Array], Array] = sum_squares_loss,
+    loss: Callable[[Array, Array], Array] = l2_loss,
     use_snap_1: bool = False,
 ):
     theta_rtrl, theta_spatial = eqx.partition(
@@ -324,7 +324,7 @@ def rtrl(
     inputs: Array,
     targets: Array,
     sp_projection_tree: RTRLStacked = None,
-    loss: Callable[[Array, Array], Scalar] = sum_squares_loss,
+    loss: Callable[[Array, Array], Scalar] = l2_loss,
     use_scan: bool = True,
     use_snap_1: bool = False,
 ):
@@ -377,46 +377,3 @@ def rtrl(
     h_T, acc_grads, jacobians_T, acc_loss = carry_T
 
     return acc_loss, acc_grads, jacobians_T
-
-
-def forward_sequence(model: RTRLStacked, inputs: Array, use_scan: bool = True):
-    hidden_state = init_state(model)
-    perturbations = make_perturbations(model)
-
-    def f_repack(state: Sequence[State], input: Array):
-        h, _, out = model.f(state, input, perturbations)
-        return h, out
-
-    # Ful forward pass over the sequence
-    # Add use_scan to test if they actually differ now.
-    if use_scan:
-        _, out = jax.lax.scan(
-            lambda carry, input: f_repack(carry, input),
-            init=hidden_state,
-            xs=inputs,
-        )
-    else:
-        carry = hidden_state
-        y_hats = []
-        for i in range(inputs.shape[0]):
-            carry, y_hat = f_repack(carry, inputs[i])
-            y_hats.append(y_hat)
-
-        y_hats = jnp.stack(y_hats)
-        out = y_hats
-
-    return out
-
-
-def loss_func(model: RTRLStacked, inputs: Array, targets: Array, use_scan: bool = True):
-    pred = forward_sequence(model, inputs, use_scan)
-    errors = jnp.sum((pred - targets) ** 2, axis=1)
-    return jnp.sum(errors)
-
-
-def bptt(model: RTRLStacked, inputs: Array, targets: Array, use_scan: bool = True):
-    loss, grads = jax.value_and_grad(loss_func, argnums=0)(
-        model, inputs, targets, use_scan
-    )
-
-    return loss, grads

@@ -142,3 +142,9 @@ class RNNLayer(RTRLLayer):
         y_out = self.C(h_out) + self.D(input)
 
         return h_out, (inmediate_jacobian, dynamics), y_out
+
+    def f_bptt(self, state: State, input: Array) -> Tuple[State, Array]:
+        h_out = self.cell.f(state, input)
+        y_out = self.C(h_out) + self.D(input)
+
+        return h_out, y_out

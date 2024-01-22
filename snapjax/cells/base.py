@@ -64,6 +64,9 @@ class RTRLLayer(eqx.Module):
         """
         ...
 
+    def f_bptt(self, state: State, input: Array) -> Tuple[State, Array]:
+        raise NotImplementedError("BPTT mode has not been implemented for this Network")
+
 
 class RTRLStacked(eqx.Module):
     """
@@ -82,6 +85,9 @@ class RTRLStacked(eqx.Module):
         sp_projection_tree: "RTRLStacked" = None,
     ) -> Tuple[Sequence[State], Sequence[Jacobians], Array]:
         ...
+
+    def f_bptt(self, state: Sequence[State], input: Array) -> Tuple[State, Array]:
+        raise NotImplementedError("BPTT mode has not been implemented for this Network")
 
     def get_sp_projection_tree(self) -> "RTRLStacked":
         """
