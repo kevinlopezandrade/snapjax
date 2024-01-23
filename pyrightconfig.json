@@ -1,0 +1,11 @@
+{
+    "include": [
+        "snapjax"
+    ],
+    "strict": [
+        "snapjax"
+    ],
+    "autoSearchPaths": false,
+    "typeCheckingMode": "strict",
+    "useLibraryCodeForTypes": false
+}

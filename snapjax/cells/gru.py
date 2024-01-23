@@ -108,7 +108,7 @@ class GRULayer(RTRLLayer):
         state: State,
         input: Array,
         perturbation: Array,
-        sp_projection_cell: RNN = None,
+        sp_projection_cell: GRU = None,
     ) -> Tuple[State, Jacobians, Array]:
         """
         Returns h_(t), y_(t)

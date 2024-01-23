@@ -8,7 +8,7 @@ from jaxtyping import Array
 
 from snapjax.cells.base import is_rtrl_cell
 from snapjax.cells.rnn import RNN, RNNLayer
-from snapjax.cells.stacked import Stacked
+from snapjax.cells.stacked import StackedCell
 
 
 def get_stacked_rnn(
@@ -27,7 +27,7 @@ def get_stacked_rnn(
         "input_size": input_size,
     }
 
-    theta = Stacked(
+    theta = StackedCell(
         RNNLayer,
         num_layers=num_layers,
         cls_kwargs=layer_args,
@@ -37,7 +37,7 @@ def get_stacked_rnn(
     return theta
 
 
-def get_random_sequence(T: int, model: Stacked, seed: int | None = None):
+def get_random_sequence(T: int, model: StackedCell, seed: int | None = None):
     if seed is None:
         key = int(time.time() * 1000)
     else:
@@ -48,7 +48,7 @@ def get_random_sequence(T: int, model: Stacked, seed: int | None = None):
     return inputs
 
 
-def get_random_batch(N: int, T: int, model: Stacked, seed: int | None = None):
+def get_random_batch(N: int, T: int, model: StackedCell, seed: int | None = None):
     if seed is None:
         key = int(time.time() * 1000)
     else:
@@ -61,7 +61,7 @@ def get_random_batch(N: int, T: int, model: Stacked, seed: int | None = None):
     return batch_inputs
 
 
-def replace_rnn_with_diagonals(model: Stacked):
+def replace_rnn_with_diagonals(model: StackedCell):
     # Replace by diagonal matrices.
     # Ugly but works.
     # Hack for the nn.RNN

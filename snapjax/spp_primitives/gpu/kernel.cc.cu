@@ -10,7 +10,7 @@ const T* UnpackDescriptor(const char* opaque, std::size_t opaque_len) {
     if (opaque_len != sizeof(T)) {
         throw std::runtime_error("Invalid opaque object size");
     }
-    return std::bit_cast<const T*>(opaque);
+    return reinterpret_cast<const T*>(opaque);
 }
 
 void ThrowIfError(cudaError_t error) {
@@ -84,12 +84,12 @@ __global__ void kernel_spp_mat_mul_double(
 // XLA Signature call
 void spp_mat_mul(cudaStream_t stream, void **buffers, const char *opaque, std::size_t opaque_len) {
     // This function its gonna use the kernel I define.
-    float* data = static_cast<float *>(buffers[0]);
-    int* cols = static_cast<int *>(buffers[1]);
-    int* indptr = static_cast<int *>(buffers[2]);
-    float* B = static_cast<float *>(buffers[3]);
-    int* sp = static_cast<int *>(buffers[4]);
-    float* out = static_cast<float *>(buffers[5]);
+    float* data = reinterpret_cast<float *>(buffers[0]);
+    int* cols = reinterpret_cast<int *>(buffers[1]);
+    int* indptr = reinterpret_cast<int *>(buffers[2]);
+    float* B = reinterpret_cast<float *>(buffers[3]);
+    int* sp = reinterpret_cast<int *>(buffers[4]);
+    float* out = reinterpret_cast<float *>(buffers[5]);
 
     const CSRAndDenseDescriptor &desc = *UnpackDescriptor<CSRAndDenseDescriptor>(opaque, opaque_len);
     const int sp_size = desc.sp_size;
@@ -105,12 +105,12 @@ void spp_mat_mul(cudaStream_t stream, void **buffers, const char *opaque, std::s
 // XLA Signature call
 void spp_mat_mul_double(cudaStream_t stream, void **buffers, const char *opaque, std::size_t opaque_len) {
     // This function its gonna use the kernel I define.
-    double* data = static_cast<double *>(buffers[0]);
-    int* cols = static_cast<int *>(buffers[1]);
-    int* indptr = static_cast<int *>(buffers[2]);
-    double* B = static_cast<double *>(buffers[3]);
-    int* sp = static_cast<int *>(buffers[4]);
-    double* out = static_cast<double *>(buffers[5]);
+    double* data = reinterpret_cast<double *>(buffers[0]);
+    int* cols = reinterpret_cast<int *>(buffers[1]);
+    int* indptr = reinterpret_cast<int *>(buffers[2]);
+    double* B = reinterpret_cast<double *>(buffers[3]);
+    int* sp = reinterpret_cast<int *>(buffers[4]);
+    double* out = reinterpret_cast<double *>(buffers[5]);
 
     const CSRAndDenseDescriptor &desc = *UnpackDescriptor<CSRAndDenseDescriptor>(opaque, opaque_len);
     const int sp_size = desc.sp_size;

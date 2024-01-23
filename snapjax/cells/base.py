@@ -10,6 +10,7 @@ from snapjax.sp_jacrev import sp_projection_tree
 
 State = Sequence[Array]
 Jacobians = Tuple["RTRLCell", Array]  # I_t, D_t
+Stacked = Sequence
 
 
 class RTRLCell(eqx.Module):
@@ -79,14 +80,16 @@ class RTRLStacked(eqx.Module):
     @abstractmethod
     def f(
         self,
-        state: Sequence[State],
+        state: Stacked[State],
         input: Array,
-        perturbations: Array,
+        perturbations: Stacked[Array],
         sp_projection_tree: "RTRLStacked" = None,
-    ) -> Tuple[Sequence[State], Sequence[Jacobians], Array]:
+    ) -> Tuple[Stacked[State], Stacked[Jacobians], Array]:
         ...
 
-    def f_bptt(self, state: Sequence[State], input: Array) -> Tuple[State, Array]:
+    def f_bptt(
+        self, state: Stacked[State], input: Array
+    ) -> Tuple[Stacked[State], Array]:
         raise NotImplementedError("BPTT mode has not been implemented for this Network")
 
     def get_sp_projection_tree(self) -> "RTRLStacked":

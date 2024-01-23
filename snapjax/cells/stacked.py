@@ -1,24 +1,15 @@
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 import equinox as eqx
 import equinox.nn as nn
 import jax
 import jax.random as jrandom
-import jax.tree_util as jtu
 from jaxtyping import Array, PRNGKeyArray
 
-from snapjax.cells.base import (
-    Jacobians,
-    RTRLCell,
-    RTRLLayer,
-    RTRLStacked,
-    State,
-    is_rtrl_cell,
-)
-from snapjax.sp_jacrev import sp_projection_tree
+from snapjax.cells.base import Jacobians, RTRLLayer, RTRLStacked, Stacked, State
 
 
-class Stacked(RTRLStacked):
+class StackedCell(RTRLStacked):
     """
     It acts as a unique cell.
     """
@@ -44,10 +35,10 @@ class Stacked(RTRLStacked):
 
     def f(
         self,
-        state: Sequence[State],
+        state: Stacked[State],
         input: Array,
         perturbations: Array,
-        sp_projection_tree: "Stacked" = None,
+        sp_projection_tree: "StackedCell" = None,
     ):
         new_state: List[State] = []
         inmediate_jacobians: List[Jacobians] = []
@@ -67,13 +58,28 @@ class Stacked(RTRLStacked):
 
         return tuple(new_state), tuple(inmediate_jacobians), out
 
-    def f_bptt(self, state: Sequence[State], input: Array) -> Tuple[State, Array]:
+    def f_bptt(
+        self, state: Stacked[State], input: Array
+    ) -> Tuple[Stacked[State], Array]:
         new_state: List[State] = []
         for i, cell in enumerate(self.layers):
             layer_state, input = cell.f_bptt(state[i], input)
             new_state.append(layer_state)
 
         return tuple(new_state), input
+
+    @classmethod
+    def from_layers(cls, layers: List[RTRLLayer]):
+        """
+        The list of layers has to ensure compatiblity,
+        from layers[i-1] and layers[i]
+        """
+        # Hack since its a dataclass.
+        obj = cls.__new__(cls)
+        object.__setattr__(obj, "layers", layers)
+        object.__setattr__(obj, "num_layers", len(layers))
+
+        return obj
 
 
 class EncoderDecoder(RTRLStacked):
@@ -84,7 +90,7 @@ class EncoderDecoder(RTRLStacked):
     d_inp: int = eqx.field(static=True)
     d_out: int = eqx.field(static=True)
 
-    def __init__(self, d_inp: int, d_out: int, stacked: Stacked, key: PRNGKeyArray):
+    def __init__(self, d_inp: int, d_out: int, stacked: StackedCell, key: PRNGKeyArray):
         self.d_inp = d_inp
         self.d_out = d_out
         self.layers = stacked.layers
@@ -96,17 +102,24 @@ class EncoderDecoder(RTRLStacked):
 
     def f(
         self,
-        state: Sequence[State],
+        state: Stacked[State],
         input: Array,
         perturbations: Array,
         sp_projection_tree: RTRLStacked = None,
-    ) -> Tuple[Sequence[State], Sequence[Jacobians], Array]:
+    ) -> Tuple[Stacked[State], Stacked[Jacobians], Array]:
         input = self.encoder(input)
 
-        states, jacobians, output = Stacked.f(
+        states, jacobians, output = StackedCell.f(
             self, state, input, perturbations, sp_projection_tree
         )
 
         output = self.decoder(output)
 
         return states, jacobians, output
+
+    def f_bptt(self, state: Stacked[State], input: Array) -> Tuple[State, Array]:
+        input = self.encoder(input)
+        state, output = StackedCell.f_bptt(self, state, input)
+        output = self.decoder(output)
+
+        return state, output

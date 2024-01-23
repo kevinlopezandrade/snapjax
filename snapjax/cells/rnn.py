@@ -67,17 +67,19 @@ class RNN(RTRLCell):
             if leaf.ndim == 1:
                 return BCOO.fromdense(jnp.eye(h, dtype=jnp.int32))
             else:
-                data = np.ones(h * h, dtype=np.int32)
-                indices = np.zeros((h * h, 2), dtype=np.int32)
+                # Assuming leaf is a matrix
+                inp = leaf.shape[1]
+                data = np.ones(h * inp, dtype=np.int32)
+                indices = np.zeros((h * inp, 2), dtype=np.int32)
                 for i in range(h):
-                    indices[(i * h) : (i + 1) * h, 0] = np.repeat(i, h)
-                    indices[(i * h) : (i + 1) * h, 1] = np.arange(h) + (i * h)
+                    indices[(i * inp) : (i + 1) * inp, 0] = np.repeat(i, inp)
+                    indices[(i * inp) : (i + 1) * inp, 1] = np.arange(inp) + (i * inp)
 
                 data = jnp.array(data)
                 indices = jnp.array(indices)
                 res = BCOO(
                     (data, indices),
-                    shape=(h, h * h),
+                    shape=(h, h * inp),
                     indices_sorted=True,
                     unique_indices=True,
                 )

@@ -344,7 +344,7 @@ def rtrl(
     acc_grads: RTRLStacked = make_zeros_grads(model)
 
     if sp_projection_tree:
-        zero_jacobians = make_zeros_jacobians_sp(sp_projection_tree=sp_projection_tree)
+        zero_jacobians = make_zeros_jacobians_sp(sp_projection_tree)
     else:
         zero_jacobians = make_zeros_jacobians(model)
 
@@ -369,4 +369,4 @@ def rtrl(
 
     h_T, acc_grads, jacobians_T, acc_loss = carry_T
 
-    return acc_loss, acc_grads, jacobians_T
+    return acc_loss, acc_grads
