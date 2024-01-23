@@ -69,12 +69,15 @@ class RTRLLayer(eqx.Module):
         raise NotImplementedError("BPTT mode has not been implemented for this Network")
 
 
+Layer = eqx.Module | RTRLLayer
+
+
 class RTRLStacked(eqx.Module):
     """
     s_1:L_(t), theta_1:L_(t), y_L(t) = f_1:L(s_1:L_(t-1), x(t))
     """
 
-    layers: eqx.AbstractVar[List[RTRLLayer]]
+    layers: eqx.AbstractVar[List[Layer]]
     num_layers: eqx.AbstractVar[int]
 
     @abstractmethod

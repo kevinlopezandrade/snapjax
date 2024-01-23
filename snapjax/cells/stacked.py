@@ -6,7 +6,7 @@ import jax
 import jax.random as jrandom
 from jaxtyping import Array, PRNGKeyArray
 
-from snapjax.cells.base import Jacobians, RTRLLayer, RTRLStacked, Stacked, State
+from snapjax.cells.base import Jacobians, Layer, RTRLLayer, RTRLStacked, Stacked, State
 
 
 class StackedCell(RTRLStacked):
@@ -14,7 +14,7 @@ class StackedCell(RTRLStacked):
     It acts as a unique cell.
     """
 
-    layers: List[RTRLLayer]
+    layers: List[Layer]
     num_layers: int = eqx.field(static=True)
 
     def __init__(
@@ -40,21 +40,33 @@ class StackedCell(RTRLStacked):
         perturbations: Array,
         sp_projection_tree: "StackedCell" = None,
     ):
+        is_sparse = True if sp_projection_tree else False
+
+        def _get_projection_cell(index: int):
+            if is_sparse:
+                layers = sp_projection_tree.layers
+                return layers[index].cell
+            else:
+                return None
+
         new_state: List[State] = []
         inmediate_jacobians: List[Jacobians] = []
         out = input
+        cell_index = 0
+        for layer in self.layers:
+            if isinstance(layer, RTRLLayer):
+                layer_state, jacobians, out = layer.f(
+                    state[cell_index],
+                    out,
+                    perturbations[cell_index],
+                    _get_projection_cell(cell_index),
+                )
+                new_state.append(layer_state)
+                inmediate_jacobians.append(jacobians)
 
-        for i, cell in enumerate(self.layers):
-            if sp_projection_tree:
-                sp_projection_cell = sp_projection_tree.layers[i].cell
+                cell_index += 1
             else:
-                sp_projection_cell = None
-
-            layer_state, jacobians, out = cell.f(
-                state[i], out, perturbations[i], sp_projection_cell
-            )
-            new_state.append(layer_state)
-            inmediate_jacobians.append(jacobians)
+                out = layer(out)
 
         return tuple(new_state), tuple(inmediate_jacobians), out
 
@@ -62,14 +74,21 @@ class StackedCell(RTRLStacked):
         self, state: Stacked[State], input: Array
     ) -> Tuple[Stacked[State], Array]:
         new_state: List[State] = []
-        for i, cell in enumerate(self.layers):
-            layer_state, input = cell.f_bptt(state[i], input)
-            new_state.append(layer_state)
+        out = input
 
-        return tuple(new_state), input
+        cell_index = 0
+        for layer in self.layers:
+            if isinstance(layer, RTRLLayer):
+                layer_state, out = layer.f_bptt(state[cell_index], out)
+                new_state.append(layer_state)
+                cell_index += 1
+            else:
+                out = layer(out)
+
+        return tuple(new_state), out
 
     @classmethod
-    def from_layers(cls, layers: List[RTRLLayer]):
+    def from_layers(cls, layers: List[Layer]):
         """
         The list of layers has to ensure compatiblity,
         from layers[i-1] and layers[i]
