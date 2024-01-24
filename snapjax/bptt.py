@@ -1,15 +1,12 @@
-from typing import Callable, Sequence
+from typing import Callable
 
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Scalar
 
-from snapjax.algos import make_init_state, make_perturbations
-from snapjax.cells.base import RTRLStacked, State
-
-
-def l2_loss(inp, pred):
-    return jnp.sum((inp - pred) ** 2)
+from snapjax.algos import make_init_state
+from snapjax.cells.base import RTRLStacked
+from snapjax.losses import l2
 
 
 def forward_sequence(model: RTRLStacked, inputs: Array, use_scan: bool = True):
@@ -39,7 +36,7 @@ def bptt(
     model: RTRLStacked,
     inputs: Array,
     targets: Array,
-    loss_func: Callable[[Array, Array], Scalar] = l2_loss,
+    loss_func: Callable[[Array, Array], Scalar] = l2,
     use_scan: bool = True,
 ):
     def _loss(model: RTRLStacked, inputs: Array, targets: Array):

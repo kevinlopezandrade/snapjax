@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Callable, List, Sequence, Tuple, cast
+from typing import Callable, List, Sequence, Tuple
 
 import equinox as eqx
 import jax
@@ -12,12 +12,9 @@ from jaxtyping import Array, Scalar
 from snapjax.cells.base import RTRLCell, RTRLLayer, RTRLStacked, State, is_rtrl_cell
 from snapjax.sp_jacrev import SparseProjection
 from snapjax.spp_primitives.primitives import spp_csr_matmul
+from snapjax.losses import l2
 
 config.update("jax_numpy_rank_promotion", "raise")
-
-
-def l2_loss(y: Array, y_hat: Array):
-    return jnp.sum((y - y_hat) ** 2)
 
 
 def make_zeros_jacobians_sp(sp_projection_tree: RTRLStacked):
@@ -29,7 +26,7 @@ def make_zeros_jacobians_sp(sp_projection_tree: RTRLStacked):
         return BCOO(
             structure,
             shape=leaf.sparse_def.shape[::-1],  # For the transpose.
-            # This is guaranteed since csc arse sorted by colum and we transpose.
+            # This is guaranteed since csc is sorted by colum and we transpose.
             indices_sorted=True,
             unique_indices=True,
         )
@@ -250,7 +247,7 @@ def step_loss(
     perturbations: Array,
     y_t: Array,
     sp_projection_tree: RTRLStacked = None,
-    loss_func: Callable[[Array, Array], Array] = l2_loss,
+    loss_func: Callable[[Array, Array], Array] = l2,
 ):
     model = eqx.combine(model_spatial, model_rtrl)
     h_t, inmediate_jacobians, y_hat = model.f(
@@ -270,7 +267,7 @@ def forward_rtrl(
     input: Array,
     target: Array,
     sp_projection_tree: RTRLStacked = None,
-    loss_func: Callable[[Array, Array], Array] = l2_loss,
+    loss_func: Callable[[Array, Array], Array] = l2,
     use_snap_1: bool = False,
 ):
     theta_rtrl, theta_spatial = eqx.partition(
@@ -327,7 +324,7 @@ def rtrl(
     inputs: Array,
     targets: Array,
     sp_projection_tree: RTRLStacked = None,
-    loss_func: Callable[[Array, Array], Scalar] = l2_loss,
+    loss_func: Callable[[Array, Array], Scalar] = l2,
     use_scan: bool = True,
     use_snap_1: bool = False,
 ):
