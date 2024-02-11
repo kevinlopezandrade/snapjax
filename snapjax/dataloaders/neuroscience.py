@@ -1,9 +1,17 @@
+"""
+Code is from https://github.com/frschu/neurips_2020_interplay_randomness_structure/
+adapted to our needs.
+"""
+import jax
+import jax.random as jrandom
 import numpy as np
+from jaxtyping import PRNGKeyArray
 
 
 def flipflop(
     dims,
     dt,
+    seed: int | None = None,
     t_max=50,
     fixation_duration=1,
     stimulus_duration=1,
@@ -17,6 +25,7 @@ def flipflop(
     return_ts=False,
     test=False,
 ):
+    np.random.seed(seed)
     """
     Flipflop task
     """
@@ -45,12 +54,12 @@ def flipflop(
         # Input and target sequences
         input_batch = np.zeros((batch_size, n_t_max, dim_in), dtype=np.float32)
         target_batch = np.zeros((batch_size, n_t_max, dim_out), dtype=np.float32)
-        mask_batch = np.zeros((batch_size, n_t_max, dim_out), dtype=np.float32)
+        mask_batch = np.zeros((batch_size, n_t_max), dtype=np.float32)
 
         for b_idx in range(batch_size):
             input_samp = np.zeros((n_t_max, dim_in))
             target_samp = np.zeros((n_t_max, dim_out))
-            mask_samp = np.zeros((n_t_max, dim_out))
+            mask_samp = np.zeros((n_t_max,))
 
             idx_t = fixation_duration_discrete
             if fixate:

@@ -10,9 +10,9 @@ from jax.experimental.sparse import BCOO, BCSR
 from jaxtyping import Array, Scalar
 
 from snapjax.cells.base import RTRLCell, RTRLLayer, RTRLStacked, State, is_rtrl_cell
+from snapjax.losses import l2
 from snapjax.sp_jacrev import SparseProjection
 from snapjax.spp_primitives.primitives import spp_csr_matmul
-from snapjax.losses import l2
 
 config.update("jax_numpy_rank_promotion", "raise")
 
@@ -133,11 +133,12 @@ def sparse_update(I_t: RTRLCell, dynamics: Array, J_t_prev: RTRLCell):
     return J_t
 
 
-@partial(jax.jit, static_argnums=(3, 4))
+@partial(jax.jit, static_argnums=(4, 5))
 def update_cell_jacobians(
     I_t: RTRLCell,
     dynamics: Array,
     J_t_prev: RTRLCell,
+    jacobian_cell_mask: RTRLCell | None = None,
     use_snap_1: bool = False,
     sparse: bool = False,
 ):
@@ -160,6 +161,14 @@ def update_cell_jacobians(
             J_t = jax.tree_map(lambda mask, j_t: mask * j_t, mask, J_t)
             return J_t
 
+    # Used for snap-n
+    elif jacobian_cell_mask:
+        J_t = jax.tree_map(
+            lambda i_t, j_t_prev: i_t + dynamics @ j_t_prev, I_t, J_t_prev
+        )
+        J_t = jax.tree_map(lambda mask, j_t: mask * j_t, jacobian_cell_mask, J_t)
+
+        return J_t
     else:
         J_t = jax.tree_map(
             lambda i_t, j_t_prev: i_t + dynamics @ j_t_prev,
@@ -169,10 +178,11 @@ def update_cell_jacobians(
         return J_t
 
 
-@partial(jax.jit, static_argnums=(2, 3))
+@partial(jax.jit, static_argnums=(3, 4))
 def update_jacobians_rtrl(
     jacobians_prev: RTRLStacked,
     inmediate_jacobians: List[Tuple[RTRLCell, Array]],
+    jacobian_mask: RTRLStacked | None = None,
     use_snap_1: bool = False,
     sparse: bool = False,
 ):
@@ -184,8 +194,18 @@ def update_jacobians_rtrl(
         if isinstance(layer, RTRLLayer):
             I_t, D_t = inmediate_jacobians[cell_index]
             J_t_prev = jacobians.layers[cell_index].cell
+            if jacobian_mask:
+                jacobian_cell_mask = jacobian_mask.layers[cell_index].cell
+            else:
+                jacobian_cell_mask = None
+
             J_t = update_cell_jacobians(
-                I_t, D_t, J_t_prev, use_snap_1=use_snap_1, sparse=sparse
+                I_t,
+                D_t,
+                J_t_prev,
+                use_snap_1=use_snap_1,
+                sparse=sparse,
+                jacobian_cell_mask=jacobian_cell_mask,
             )
 
             jacobians = eqx.tree_at(
@@ -246,15 +266,16 @@ def step_loss(
     x_t: Array,
     perturbations: Array,
     y_t: Array,
-    sp_projection_tree: RTRLStacked = None,
-    loss_func: Callable[[Array, Array], Array] = l2,
+    mask: float,
+    sp_projection_tree: RTRLStacked | None = None,
+    loss_func: Callable[[Array, Array, float], Array] = l2,
 ):
     model = eqx.combine(model_spatial, model_rtrl)
     h_t, inmediate_jacobians, y_hat = model.f(
         h_prev, x_t, perturbations, sp_projection_tree
     )
 
-    res = loss_func(y_t, y_hat)
+    res = loss_func(y_t, y_hat, mask)
 
     return res, (h_t, y_hat, inmediate_jacobians)
 
@@ -266,8 +287,10 @@ def forward_rtrl(
     h_prev: Sequence[State],
     input: Array,
     target: Array,
-    sp_projection_tree: RTRLStacked = None,
-    loss_func: Callable[[Array, Array], Array] = l2,
+    mask: float = 1.0,
+    sp_projection_tree: RTRLStacked | None = None,
+    jacobian_mask: RTRLStacked | None = None,
+    loss_func: Callable[[Array, Array, float], Array] = l2,
     use_snap_1: bool = False,
 ):
     theta_rtrl, theta_spatial = eqx.partition(
@@ -287,6 +310,7 @@ def forward_rtrl(
         input,
         perturbations,
         target,
+        mask,
         sp_projection_tree=sp_projection_tree,
     )
 
@@ -295,7 +319,11 @@ def forward_rtrl(
 
     sparse = True if sp_projection_tree else False
     jacobians = update_jacobians_rtrl(
-        jacobians_prev, inmediate_jacobians, use_snap_1=use_snap_1, sparse=sparse
+        jacobians_prev,
+        inmediate_jacobians,
+        use_snap_1=use_snap_1,
+        sparse=sparse,
+        jacobian_mask=jacobian_mask,
     )
 
     grads = update_rtrl_cells_grads(
@@ -323,13 +351,24 @@ def rtrl(
     model: RTRLStacked,
     inputs: Array,
     targets: Array,
-    sp_projection_tree: RTRLStacked = None,
-    loss_func: Callable[[Array, Array], Scalar] = l2,
+    mask: Array | None = None,
+    sp_projection_tree: RTRLStacked | None = None,
+    jacobian_mask: RTRLStacked | None = None,
+    loss_func: Callable[[Array, Array, float], Scalar] = l2,
     use_scan: bool = True,
     use_snap_1: bool = False,
 ):
+    if mask is not None:
+        n_non_masked = mask.sum()
+        _loss_func = lambda y, y_hat, mask: (1 / n_non_masked) * loss_func(
+            y, y_hat, mask
+        )
+    else:
+        mask = jnp.ones(targets.shape[0])
+        _loss_func = loss_func
+
     def forward_repack(carry, data):
-        input, target = data
+        input, target, mask = data
         h_prev, acc_grads, jacobians_prev, acc_loss = carry
 
         out = forward_rtrl(
@@ -338,9 +377,11 @@ def rtrl(
             h_prev,
             input,
             target,
+            mask,
             sp_projection_tree=sp_projection_tree,
+            jacobian_mask=jacobian_mask,
             use_snap_1=use_snap_1,
-            loss_func=loss_func,
+            loss_func=_loss_func,
         )
         h_t, grads, jacobians_t, loss_t, y_hat = out
         acc_loss = acc_loss + loss_t
@@ -364,14 +405,14 @@ def rtrl(
         carry_T, _ = jax.lax.scan(
             forward_repack,
             init=(h_init, acc_grads, zero_jacobians, acc_loss),
-            xs=(inputs, targets),
+            xs=(inputs, targets, mask),
         )
     else:
         carry = (h_init, acc_grads, zero_jacobians, acc_loss)
         T = inputs.shape[0]
         y_hats = [None] * T
         for i in range(inputs.shape[0]):
-            carry, y_hat = forward_repack(carry, (inputs[i], targets[i]))
+            carry, y_hat = forward_repack(carry, (inputs[i], targets[i], mask[i]))
             y_hats[i] = y_hat
 
         y_hats = jnp.stack(y_hats)

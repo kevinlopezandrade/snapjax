@@ -36,12 +36,19 @@ def bptt(
     model: RTRLStacked,
     inputs: Array,
     targets: Array,
-    loss_func: Callable[[Array, Array], Scalar] = l2,
+    mask: Array | None = None,
+    loss_func: Callable[[Array, Array, float], Scalar] = l2,
     use_scan: bool = True,
 ):
+    if mask is not None:
+        factor = mask.sum()
+    else:
+        mask = jnp.ones(targets.shape[0])
+        factor = 1
+
     def _loss(model: RTRLStacked, inputs: Array, targets: Array):
         preds = forward_sequence(model, inputs, use_scan=use_scan)
-        losses = jnp.sum(jax.vmap(loss_func)(targets, preds))
+        losses = (1 / factor) * jnp.sum(jax.vmap(loss_func)(targets, preds, mask))
         return losses, preds
 
     (acc_loss, preds), acc_grads = jax.value_and_grad(_loss, has_aux=True)(
