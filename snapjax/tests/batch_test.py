@@ -22,14 +22,14 @@ def test_batch_no_sp_no_scan():
     batch_out = get_random_batch(B, T, model)
 
     mapped_rtrl = jax.vmap(jtu.Partial(rtrl, model, use_snap_1=True, use_scan=False))
-    acc_loss_batch, acc_grads_batch = mapped_rtrl(batch_inp, batch_out)
+    acc_loss_batch, acc_grads_batch, _ = mapped_rtrl(batch_inp, batch_out)
 
     passed = True
     for i in range(B):
         inp = batch_inp[i]
         out = batch_out[i]
 
-        acc_loss, acc_grads = rtrl(model, inp, out, use_snap_1=True, use_scan=False)
+        acc_loss, acc_grads, _ = rtrl(model, inp, out, use_snap_1=True, use_scan=False)
 
         assert jnp.allclose(acc_loss_batch[i], acc_loss)
 
@@ -66,14 +66,14 @@ def test_batch_sp_no_scan():
             use_scan=False,
         )
     )
-    acc_loss_batch, acc_grads_batch = mapped_rtrl(batch_inp, batch_out)
+    acc_loss_batch, acc_grads_batch, _ = mapped_rtrl(batch_inp, batch_out)
 
     passed = True
     for i in range(B):
         inp = batch_inp[i]
         out = batch_out[i]
 
-        acc_loss, acc_grads = rtrl(
+        acc_loss, acc_grads, _ = rtrl(
             model,
             inp,
             out,
@@ -117,14 +117,14 @@ def test_batch_sp_scan():
             use_scan=True,
         )
     )
-    acc_loss_batch, acc_grads_batch = mapped_rtrl(batch_inp, batch_out)
+    acc_loss_batch, acc_grads_batch, _ = mapped_rtrl(batch_inp, batch_out)
 
     passed = True
     for i in range(B):
         inp = batch_inp[i]
         out = batch_out[i]
 
-        acc_loss, acc_grads = rtrl(
+        acc_loss, acc_grads, _ = rtrl(
             model,
             inp,
             out,

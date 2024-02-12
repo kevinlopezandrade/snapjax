@@ -28,8 +28,8 @@ def test_no_snap_one_layer():
     inputs = get_random_sequence(T, model)
     targets = get_random_sequence(T, model)
 
-    loss, acc_grads = rtrl(model, inputs, targets, use_snap_1=False, use_scan=False)
-    loss_bptt, acc_grads_bptt = bptt(model, inputs, targets, use_scan=False)
+    loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=False)
+    loss_bptt, acc_grads_bptt, _ = bptt(model, inputs, targets, use_scan=False)
 
     assert jnp.allclose(loss, loss_bptt)
 
@@ -61,8 +61,8 @@ def test_no_snap_mutliple_layers():
     inputs = get_random_sequence(T, model)
     targets = get_random_sequence(T, model)
 
-    loss, acc_grads = rtrl(model, inputs, targets, use_snap_1=False, use_scan=False)
-    loss_bptt, acc_grads_bptt = bptt(model, inputs, targets)
+    loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=False)
+    loss_bptt, acc_grads_bptt, _ = bptt(model, inputs, targets)
 
     assert jnp.allclose(loss, loss_bptt)
 
@@ -93,8 +93,8 @@ def test_scan_unrolled():
     inputs = get_random_sequence(T, model)
     targets = get_random_sequence(T, model)
 
-    loss, acc_grads = rtrl(model, inputs, targets, use_snap_1=False, use_scan=True)
-    loss_no_scan, acc_grads_no_scan = rtrl(
+    loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=True)
+    loss_no_scan, acc_grads_no_scan, _ = rtrl(
         model, inputs, targets, use_snap_1=False, use_scan=False
     )
 
@@ -132,7 +132,7 @@ def test_bptt_snap_diagonal():
     inputs = get_random_sequence(T, model)
     targets = get_random_sequence(T, model)
 
-    loss, acc_grads = rtrl(
+    loss, acc_grads, _ = rtrl(
         model,
         inputs,
         targets,
@@ -140,7 +140,7 @@ def test_bptt_snap_diagonal():
         use_snap_1=True,
         use_scan=False,
     )
-    loss_bptt, acc_grads_bptt = bptt(model, inputs, targets, use_scan=False)
+    loss_bptt, acc_grads_bptt, _ = bptt(model, inputs, targets, use_scan=False)
 
     assert jnp.allclose(loss, loss_bptt)
 

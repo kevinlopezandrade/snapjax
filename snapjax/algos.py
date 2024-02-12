@@ -402,7 +402,7 @@ def rtrl(
     acc_loss = 0.0
 
     if use_scan:
-        carry_T, _ = jax.lax.scan(
+        carry_T, y_hats = jax.lax.scan(
             forward_repack,
             init=(h_init, acc_grads, zero_jacobians, acc_loss),
             xs=(inputs, targets, mask),
@@ -420,4 +420,4 @@ def rtrl(
 
     h_T, acc_grads, jacobians_T, acc_loss = carry_T
 
-    return acc_loss, acc_grads
+    return acc_loss, acc_grads, y_hats

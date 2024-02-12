@@ -55,4 +55,4 @@ def bptt(
         model, inputs, targets
     )
 
-    return acc_loss, acc_grads
+    return acc_loss, acc_grads, preds
