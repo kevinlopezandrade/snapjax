@@ -3,6 +3,7 @@ Code is from https://github.com/frschu/neurips_2020_interplay_randomness_structu
 adapted to our needs.
 """
 import jax
+import jax.numpy as jnp
 import jax.random as jrandom
 import numpy as np
 from jaxtyping import PRNGKeyArray
@@ -10,7 +11,6 @@ from jaxtyping import PRNGKeyArray
 
 def flipflop(
     dims,
-    dt,
     seed: int | None = None,
     t_max=50,
     fixation_duration=1,
@@ -126,6 +126,75 @@ def flipflop(
         return task, ts
     else:
         return task
+
+
+def flip_flop_sequence(
+    key: PRNGKeyArray,
+    dt: float = 0.5,
+    t_max=50,
+    fixation_duration=1,
+    stimulus_duration=1,
+    decision_delay_duration=5,
+    stim_delay_duration_min=5,
+    stim_delay_duration_max=25,
+    input_amp=1.0,
+    target_amp=0.5,
+    fixate=False,
+):
+    fixation_duration_discrete = int(fixation_duration / dt)
+    stimulus_duration_discrete = int(stimulus_duration / dt)
+    decision_delay_duration_discrete = int(decision_delay_duration / dt)
+    n_t_max = int(t_max / dt)
+    choices = jnp.array([0, 1])
+    signs = jnp.array([-1, 1])
+
+    input_samp = np.zeros((n_t_max, 2))
+    target_samp = np.zeros((n_t_max, 2))
+    mask_samp = np.zeros((n_t_max,))
+
+    idx_t = fixation_duration_discrete
+
+    if fixate:
+        # Mask
+        mask_samp[:idx_t] = 1
+
+    while True:
+        # Interval until next pulse.
+        key, interval_key, channel_key, sign_key = jrandom.split(key, 4)
+        interval = jrandom.uniform(
+            key=interval_key,
+            minval=stim_delay_duration_min,
+            maxval=stim_delay_duration_max,
+        )
+        interval += decision_delay_duration
+
+        # Next pulse start index.
+        n_t_interval = int(interval / dt)
+        idx_tp1 = idx_t + n_t_interval
+
+        channel = jrandom.choice(channel_key, choices).item()
+        sign = jrandom.choice(sign_key, signs).item()
+
+        # Input
+        input_samp[idx_t : idx_t + stimulus_duration_discrete, channel] = sign
+        # Target
+        target_samp[idx_t + decision_delay_duration_discrete : idx_tp1, channel] = sign
+        # Mask
+        mask_samp[idx_t + decision_delay_duration_discrete : idx_tp1] = 1
+        # Update
+        idx_t = idx_tp1
+
+        if idx_t > n_t_max:
+            break
+
+    return input_samp, target_samp, mask_samp
+
+
+def gen_flipflop(N: int, key: PRNGKeyArray, **params):
+    with jax.default_device(jax.devices("cpu")[0]):
+        keys = jrandom.split(key, N)
+        for key in keys:
+            yield flip_flop_sequence(key, **params)
 
 
 ########################################################################################
