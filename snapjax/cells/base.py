@@ -6,8 +6,6 @@ import jax
 import jax.tree_util as jtu
 from jaxtyping import Array
 
-from snapjax.sp_jacrev import sp_projection_tree
-
 State = Sequence[Array]
 Jacobians = Tuple["RTRLCell", Array]  # I_t, D_t
 Stacked = Sequence
@@ -22,23 +20,18 @@ class RTRLCell(eqx.Module):
     input_size: eqx.AbstractVar[int]
 
     @abstractmethod
-    def f(self, state: State, input: Array) -> State:
-        ...
+    def f(self, state: State, input: Array) -> State: ...
 
     @staticmethod
     @abstractmethod
-    def init_state(cell: "RTRLCell") -> State:
-        ...
+    def init_state(cell: "RTRLCell") -> State: ...
 
     @staticmethod
     @abstractmethod
-    def make_zero_jacobians(cell: "RTRLCell") -> "RTRLCell":
-        ...
+    def make_zero_jacobians(cell: "RTRLCell") -> "RTRLCell": ...
 
-    @staticmethod
     @abstractmethod
-    def make_sp_pattern(cell: "RTRLCell") -> "RTRLCell":
-        ...
+    def make_snap_n_mask(self: "RTRLCell", n: int) -> "RTRLCell": ...
 
 
 class RTRLLayer(eqx.Module):
@@ -87,40 +80,37 @@ class RTRLStacked(eqx.Module):
         input: Array,
         perturbations: Stacked[Array],
         sp_projection_tree: "RTRLStacked" = None,
-    ) -> Tuple[Stacked[State], Stacked[Jacobians], Array]:
-        ...
+    ) -> Tuple[Stacked[State], Stacked[Jacobians], Array]: ...
 
     def f_bptt(
         self, state: Stacked[State], input: Array
     ) -> Tuple[Stacked[State], Array]:
         raise NotImplementedError("BPTT mode has not been implemented for this Network")
 
-    def get_sp_projection_tree(self) -> "RTRLStacked":
+    def get_snap_n_mask(self, n: int) -> "RTRLStacked":
         """
-        Gets the sparse projection tree, from only
-        the layers annotated as RTRLCell.
+        Gets the maks for performing snap-n, where n >= 1.
         """
         default = jax.default_backend()
         cpu_device = jax.devices("cpu")[0]
 
-        # Move the RNN to CPU, to avoid creating the
-        # explicit jacobians in the GPU.
+        # Move the RNN to CPU, to avoid creating masks in the GPU.
         cells = eqx.filter(self, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell)
         cells = jtu.tree_map(lambda leaf: jax.device_put(leaf, cpu_device), cells)
 
         with jax.default_device(jax.devices("cpu")[0]):
-            sp_tree = jtu.tree_map(
-                lambda cell: sp_projection_tree(cell.make_sp_pattern(cell)),
+            jacobian_mask = jtu.tree_map(
+                lambda cell: cell.make_snap_n_mask(n),
                 cells,
                 is_leaf=is_rtrl_cell,
             )
 
         # Move back to GPU once computed.
-        sp_tree = jtu.tree_map(
-            lambda leaf: jax.device_put(leaf, jax.devices(default)[0]), sp_tree
+        jacobian_mask = jtu.tree_map(
+            lambda leaf: jax.device_put(leaf, jax.devices(default)[0]), jacobian_mask
         )
 
-        return sp_tree
+        return jacobian_mask
 
 
 def is_rtrl_cell(node: Any):

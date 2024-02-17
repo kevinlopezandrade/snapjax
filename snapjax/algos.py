@@ -11,15 +11,18 @@ from jaxtyping import Array, Scalar
 
 from snapjax.cells.base import RTRLCell, RTRLLayer, RTRLStacked, State, is_rtrl_cell
 from snapjax.losses import l2
-from snapjax.sp_jacrev import SparseProjection
+from snapjax.sp_jacrev import DenseProjection, Mask, SparseMask, SparseProjection
 from snapjax.spp_primitives.primitives import spp_csr_matmul
 
 config.update("jax_numpy_rank_promotion", "raise")
 
 
-def make_zeros_jacobians_sp(sp_projection_tree: RTRLStacked):
+def make_zeros_jacobians_sp(jacobian_projection: RTRLStacked):
     # Jacobians are saved as the tranpose jacobians.
-    def _sparse_jacobian(leaf: SparseProjection):
+    def _sparse_jacobian(leaf: SparseProjection | DenseProjection):
+        if isinstance(leaf, DenseProjection):
+            return jnp.zeros(leaf.shape)
+
         zeros = jnp.zeros(leaf.sparse_def.nse)
         indices = leaf.sparse_def.indices_csc[:, ::-1]  # For the transpose.
         structure = (zeros, indices)
@@ -33,8 +36,8 @@ def make_zeros_jacobians_sp(sp_projection_tree: RTRLStacked):
 
     zero_jacobians = jtu.tree_map(
         lambda leaf: _sparse_jacobian(leaf),
-        sp_projection_tree,
-        is_leaf=lambda node: isinstance(node, SparseProjection),
+        jacobian_projection,
+        is_leaf=lambda node: isinstance(node, (SparseProjection, DenseProjection)),
     )
 
     return zero_jacobians
@@ -57,9 +60,14 @@ def make_zeros_jacobians(model: RTRLStacked):
 
 def make_zeros_grads(model: RTRLStacked):
     def zeros_in_leaf(leaf):
-        return jnp.zeros(shape=leaf.shape)
+        if isinstance(leaf, BCOO):
+            return jnp.zeros(leaf.nse)
+        else:
+            return jnp.zeros(shape=leaf.shape)
 
-    zero_grads = jax.tree_map(zeros_in_leaf, model)
+    zero_grads = jax.tree_map(
+        zeros_in_leaf, model, is_leaf=lambda node: isinstance(node, BCOO)
+    )
 
     return zero_grads
 
@@ -100,74 +108,46 @@ def sparse_matching_addition(A: BCOO, B: BCOO) -> BCOO:
 
 
 @jax.jit
-def mask_by_it(i_t: BCOO, j_t: BCOO):
-    mask = (jnp.abs(i_t.data) > 0.0).astype(i_t.data.dtype)
-
-    # It does introduce explicit zeros in the BCOO
-    # but is fine for our puposes.
-    return BCOO(
-        (j_t.data * mask, j_t.indices),
-        shape=j_t.shape,
-        indices_sorted=True,
-        unique_indices=True,
-    )
-
-
-@jax.jit
-def sparse_update(I_t: RTRLCell, dynamics: Array, J_t_prev: RTRLCell):
+def compute_masked_jacobian(
+    jacobian_mask: RTRLCell, I_t: RTRLCell, dynamics: Array, J_t_prev: RTRLCell
+):
     """
-    Note that I_t and J_t_prev must be actually the transposed ones.
-    Returns the I + D*J(t_1) tranposed.
+    Note that I_t and J_t_prev must be actually the transposed ones if they are in BCOO.
+    Returns the I + D*J(t_1) tranposed if in BCOO.
     """
 
-    def _update_rtrl_bcco(i_t: BCOO, j_t_prev: BCOO) -> BCOO:
-        prod = dense_coo_product(dynamics, j_t_prev, j_t_prev.indices)
-        return sparse_matching_addition(i_t, prod)
+    def _update(i_t: BCOO | Array, j_t_prev: BCOO | Array, j_mask: Mask | SparseMask):
+        if isinstance(j_mask, SparseMask):
+            # j_t_prev comes as the transpose jacobian
+            # therefore we must transpose the j_mask indices.
+            sp = j_mask.indices[:, ::-1]
+            prod = dense_coo_product(dynamics, j_t_prev, sp)
+            res = sparse_matching_addition(i_t, prod)
+            return res
+        else:
+            return j_mask.mask * (i_t + dynamics @ j_t_prev)
 
     J_t = jax.tree_map(
-        lambda i_t, j_t_prev: mask_by_it(i_t, _update_rtrl_bcco(i_t, j_t_prev)),
+        lambda i_t, j_t_prev, j_mask: _update(i_t, j_t_prev, j_mask),
         I_t,
         J_t_prev,
+        jacobian_mask,
         is_leaf=lambda node: isinstance(node, BCOO),
     )
+
     return J_t
 
 
-@partial(jax.jit, static_argnums=(4, 5))
+@jax.jit
 def update_cell_jacobians(
     I_t: RTRLCell,
     dynamics: Array,
     J_t_prev: RTRLCell,
     jacobian_cell_mask: RTRLCell | None = None,
-    use_snap_1: bool = False,
-    sparse: bool = False,
 ):
-    # RTRL
-    if use_snap_1:
-        if sparse:
-            J_t_T = sparse_update(I_t, dynamics, J_t_prev)
-            return J_t_T
-        else:
-            # The theoretical one from the paper.
-            J_t = jax.tree_map(
-                lambda i_t, j_t_prev: i_t + dynamics @ j_t_prev,
-                I_t,
-                J_t_prev,
-            )
-            mask = jax.tree_map(
-                lambda matrix: (jnp.abs(matrix) > 0.0).astype(matrix.dtype),
-                I_t,
-            )
-            J_t = jax.tree_map(lambda mask, j_t: mask * j_t, mask, J_t)
-            return J_t
-
-    # Used for snap-n
-    elif jacobian_cell_mask:
-        J_t = jax.tree_map(
-            lambda i_t, j_t_prev: i_t + dynamics @ j_t_prev, I_t, J_t_prev
-        )
-        J_t = jax.tree_map(lambda mask, j_t: mask * j_t, jacobian_cell_mask, J_t)
-
+    # Apply masks to the jacobians.
+    if jacobian_cell_mask:
+        J_t = compute_masked_jacobian(jacobian_cell_mask, I_t, dynamics, J_t_prev)
         return J_t
     else:
         J_t = jax.tree_map(
@@ -178,13 +158,11 @@ def update_cell_jacobians(
         return J_t
 
 
-@partial(jax.jit, static_argnums=(3, 4))
+@jax.jit
 def update_jacobians_rtrl(
     jacobians_prev: RTRLStacked,
     inmediate_jacobians: List[Tuple[RTRLCell, Array]],
     jacobian_mask: RTRLStacked | None = None,
-    use_snap_1: bool = False,
-    sparse: bool = False,
 ):
     # Jax will do loop unrolling here, but number of layers is not that big
     # so it will be fine.
@@ -203,8 +181,6 @@ def update_jacobians_rtrl(
                 I_t,
                 D_t,
                 J_t_prev,
-                use_snap_1=use_snap_1,
-                sparse=sparse,
                 jacobian_cell_mask=jacobian_cell_mask,
             )
 
@@ -217,34 +193,27 @@ def update_jacobians_rtrl(
     return jacobians
 
 
-@partial(jax.jit, static_argnums=3)
+@jax.jit
 def update_rtrl_cells_grads(
     grads: RTRLStacked,
     hidden_states_grads: List[Array],
     jacobians: RTRLStacked,
-    sparse: bool = False,
 ):
-    def _leaf_function(is_sparse):
-        if is_sparse:
-            _is_leaf_func = lambda node: isinstance(node, BCOO)
-            return _is_leaf_func
+    def matmul_by_h(ht_grad: Array, jacobian: Array | BCOO):
+        if isinstance(jacobian, BCOO):
+            return (ht_grad @ jacobian.T).T
         else:
-            return None
+            return ht_grad @ jacobian
 
     cell_index = 0
     for layer in grads.layers:
         if isinstance(layer, RTRLLayer):
             ht_grad = hidden_states_grads[cell_index]
-            if sparse:
-                matmul_by_h = jtu.Partial(lambda a, b: (b @ a.T).T, ht_grad)
-            else:
-                matmul_by_h = jtu.Partial(lambda a, b: a @ b, ht_grad)
-
             rtrl_cell_jac = jacobians.layers[cell_index].cell
             rtrl_cell_grads = jax.tree_map(
-                lambda jacobian: matmul_by_h(jacobian),
+                lambda jacobian: matmul_by_h(ht_grad, jacobian),
                 rtrl_cell_jac,
-                is_leaf=_leaf_function(sparse),
+                is_leaf=lambda node: isinstance(node, BCOO),
             )
             grads = eqx.tree_at(
                 lambda grads: grads.layers[cell_index].cell,
@@ -267,12 +236,12 @@ def step_loss(
     perturbations: Array,
     y_t: Array,
     mask: float,
-    sp_projection_tree: RTRLStacked | None = None,
+    jacobian_projection: RTRLStacked | None = None,
     loss_func: Callable[[Array, Array, float], Array] = l2,
 ):
     model = eqx.combine(model_spatial, model_rtrl)
     h_t, inmediate_jacobians, y_hat = model.f(
-        h_prev, x_t, perturbations, sp_projection_tree
+        h_prev, x_t, perturbations, jacobian_projection
     )
 
     res = loss_func(y_t, y_hat, mask)
@@ -288,10 +257,9 @@ def forward_rtrl(
     input: Array,
     target: Array,
     mask: float = 1.0,
-    sp_projection_tree: RTRLStacked | None = None,
     jacobian_mask: RTRLStacked | None = None,
+    jacobian_projection: RTRLStacked | None = None,
     loss_func: Callable[[Array, Array, float], Array] = l2,
-    use_snap_1: bool = False,
 ):
     theta_rtrl, theta_spatial = eqx.partition(
         model,
@@ -311,28 +279,27 @@ def forward_rtrl(
         perturbations,
         target,
         mask,
-        sp_projection_tree=sp_projection_tree,
+        jacobian_projection=jacobian_projection,
     )
 
     h_t, y_hat, inmediate_jacobians = aux
     spatial_grads, hidden_states_grads = grads
 
-    sparse = True if sp_projection_tree else False
     jacobians = update_jacobians_rtrl(
         jacobians_prev,
         inmediate_jacobians,
-        use_snap_1=use_snap_1,
-        sparse=sparse,
         jacobian_mask=jacobian_mask,
     )
 
-    grads = update_rtrl_cells_grads(
-        spatial_grads, hidden_states_grads, jacobians, sparse=sparse
-    )
+    grads = update_rtrl_cells_grads(spatial_grads, hidden_states_grads, jacobians)
 
     # Reshape the flattened gradients of the RTRL cells.
-    if sparse:
-        grads = jtu.tree_map(lambda mat, grad: grad.reshape(mat.shape), model, grads)
+    grads = jtu.tree_map(
+        lambda grad, mat: grad if isinstance(mat, BCOO) else grad.reshape(mat.shape),
+        grads,
+        model,
+        is_leaf=lambda node: isinstance(node, BCOO),
+    )
 
     return h_t, grads, jacobians, loss_t, y_hat
 
@@ -352,11 +319,10 @@ def rtrl(
     inputs: Array,
     targets: Array,
     mask: Array | None = None,
-    sp_projection_tree: RTRLStacked | None = None,
     jacobian_mask: RTRLStacked | None = None,
+    jacobian_projection: RTRLStacked | None = None,
     loss_func: Callable[[Array, Array, float], Scalar] = l2,
     use_scan: bool = True,
-    use_snap_1: bool = False,
 ):
     if mask is not None:
         n_non_masked = mask.sum()
@@ -378,9 +344,8 @@ def rtrl(
             input,
             target,
             mask,
-            sp_projection_tree=sp_projection_tree,
             jacobian_mask=jacobian_mask,
-            use_snap_1=use_snap_1,
+            jacobian_projection=jacobian_projection,
             loss_func=_loss_func,
         )
         h_t, grads, jacobians_t, loss_t, y_hat = out
@@ -394,8 +359,8 @@ def rtrl(
     h_init: Sequence[State] = make_init_state(model)
     acc_grads: RTRLStacked = make_zeros_grads(model)
 
-    if sp_projection_tree:
-        zero_jacobians = make_zeros_jacobians_sp(sp_projection_tree)
+    if jacobian_projection:
+        zero_jacobians = make_zeros_jacobians_sp(jacobian_projection)
     else:
         zero_jacobians = make_zeros_jacobians(model)
 

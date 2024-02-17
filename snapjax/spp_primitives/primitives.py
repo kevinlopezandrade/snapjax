@@ -4,6 +4,7 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array
 import numpy as np
 from jax import core
 from jax.interpreters import batching, mlir, xla
@@ -318,3 +319,73 @@ def spp_csr_matmul_batch(args, batch_axes):
 
 
 batching.primitive_batchers[spp_csr_matmul_p] = spp_csr_matmul_batch
+
+
+def mask_mat_mul(data, cols, indptr, A: Array, B: Array) -> Array:
+    return mask_mat_mul_p.bind(data, cols, indptr, A, B)
+
+
+mask_mat_mul_p = core.Primitive("mask_mat_mul")
+mask_mat_mul_p.def_impl(partial(xla.apply_primitive, mask_mat_mul_p))
+
+
+def mask_mat_mul_abstract_eval(data, cols, indptr, A, B):
+    return core.ShapedArray(shape=(A.shape[0], B.shape[1]), dtype=A.dtype)
+
+
+mask_mat_mul_p.def_abstract_eval(mask_mat_mul_abstract_eval)
+
+
+def _mask_mat_mul_cuda_lowering(ctx, data, cols, indptr, A, B):
+    data_type = ir.RankedTensorType(data.type)
+    cols_type = ir.RankedTensorType(cols.type)
+    indptr_type = ir.RankedTensorType(indptr.type)
+    A_type = ir.RankedTensorType(A.type)
+    B_type = ir.RankedTensorType(B.type)
+
+    descriptor_opaque = sp_ops.build_sddmm_descriptor(
+        data_type.shape[0],  # nnz
+        A_type.shape[0],
+        A_type.shape[1],
+        B_type.shape[0],
+        B_type.shape[1],
+    )
+
+    if ctx.avals_in[0].dtype == jnp.float32:
+        op_name = b"mask_mat_mul_cuda"
+    elif ctx.avals_in[0].dtype == jnp.float64:
+        raise ValueError("Dtype not supported")
+    else:
+        raise ValueError("Dtype not supported")
+
+    out_shape = (A_type.shape[0], B_type.shape[1])
+
+    out = mlir.custom_call(
+        op_name,
+        result_types=[ir.RankedTensorType.get(out_shape, A_type.element_type)],
+        operands=[
+            data,
+            cols,
+            indptr,
+            A,
+            B,
+        ],
+        operand_layouts=[
+            _get_layout(data_type.shape),
+            _get_layout(cols_type.shape),
+            _get_layout(indptr_type.shape),
+            _get_layout(A_type.shape),
+            _get_layout(B_type.shape),
+        ],
+        result_layouts=[_get_layout(out_shape)],
+        backend_config=descriptor_opaque,
+    ).results
+
+    return out
+
+
+mlir.register_lowering(
+    mask_mat_mul_p,
+    _mask_mat_mul_cuda_lowering,
+    platform="gpu",
+)

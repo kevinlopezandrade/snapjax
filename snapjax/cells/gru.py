@@ -1,4 +1,4 @@
-from typing import Sequence, Tuple
+from typing import Tuple
 
 import equinox as eqx
 import equinox.nn as nn
@@ -6,13 +6,11 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
-import numpy as np
-from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray
 
 from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
-from snapjax.cells.rnn import RNN
-from snapjax.sp_jacrev import sp_jacrev, sp_projection_tree
+from snapjax.cells.utils import construct_snap_n_mask
+from snapjax.sp_jacrev import sp_jacrev
 
 
 class GRU(RTRLCell):
@@ -71,13 +69,13 @@ class GRU(RTRLCell):
         )
         return zero_jacobians
 
-    @staticmethod
-    def make_sp_pattern(cell: "GRU"):
-        """
-        The sparsity pattern of this Engel GRU
-        matches the sparsity of the RNN as well.
-        """
-        return RNN.make_sp_pattern(cell)
+    def make_snap_n_mask(self, n: int):
+        mask = jtu.tree_map(
+            lambda leaf: construct_snap_n_mask(leaf, n),
+            self,
+        )
+
+        return mask
 
 
 class GRULayer(RTRLLayer):

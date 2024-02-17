@@ -23,9 +23,11 @@ check_language(CUDA)
 
 # Include CUDA Headers.
 include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
-# set(CMAKE_CUDA_FLAGS "-std=c++20")
+set(CMAKE_CUDA_FLAGS "-std=c++20 -lcusparse")
 
 set(CMAKE_CXX_FLAGS "-std=c++2a")
 set(CMAKE_CXX_FLAGS "-I$ENV{CONDA_PREFIX}/include")
 
 nanobind_add_module(sp_ops NOMINSIZE sp_ops.cc kernel.cc.cu)
+
+target_link_libraries(sp_ops PRIVATE CUDA::cusparse)

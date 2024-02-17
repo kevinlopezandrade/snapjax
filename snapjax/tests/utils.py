@@ -27,12 +27,13 @@ def get_stacked_rnn(
         "input_size": input_size,
     }
 
-    theta = StackedCell(
-        RNNLayer,
-        num_layers=num_layers,
-        cls_kwargs=layer_args,
-        key=jrandom.PRNGKey(key),
-    )
+    layers = []
+    keys = jrandom.split(jrandom.PRNGKey(key), num_layers)
+    for i in range(num_layers):
+        layer = RNNLayer(hidden_size=hidden_size, input_size=input_size, key=keys[i])
+        layers.append(layer)
+
+    theta = StackedCell(layers)
 
     return theta
 

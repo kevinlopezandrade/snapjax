@@ -2,6 +2,7 @@
 #include <bit>
 #include "kernel.h"
 #include <cuda_runtime_api.h>
+#include <cusparse.h>
 
 // Required by JAX to encapsulate in _CUSTOM_CALL_TARGET
 template <typename T>
@@ -24,6 +25,7 @@ nanobind::dict Registrations() {
     nanobind::dict dict;
     dict["spp_csr_matmul_cuda"] = EncapsulateFunction(spp_mat_mul);
     dict["spp_csr_matmul_cuda_double"] = EncapsulateFunction(spp_mat_mul_double);
+    dict["mask_mat_mul_cuda"] = EncapsulateFunction(mask_mat_mul);
     return dict;
 }
 
@@ -33,7 +35,14 @@ nanobind::bytes BuildCSRAndDenseDescriptor(
     return PackDescriptor(CSRAndDenseDescriptor{data_size, indptr_size, sp_size, B_dim_1, B_dim_2});
 }
 
+nanobind::bytes BuildSDDMMDescriptor(
+        int nnz, int A_dim_1, int A_dim_2, int B_dim_1, int B_dim_2)
+{
+    return PackDescriptor(SDDMMDescriptor{nnz, A_dim_1, A_dim_2, B_dim_1, B_dim_2});
+}
+
 NB_MODULE(sp_ops, m) {
     m.def("registrations", &Registrations);
     m.def("build_csr_and_dense_descriptor", &BuildCSRAndDenseDescriptor);
+    m.def("build_sddmm_descriptor", &BuildSDDMMDescriptor);
 }

@@ -8,7 +8,7 @@ import jax.tree_util as jtu
 from jaxtyping import Array, PRNGKeyArray, Scalar
 
 from snapjax.cells.base import RTRLCell, RTRLLayer, State
-from snapjax.cells.rnn import RNN
+from snapjax.cells.utils import construct_snap_n_mask
 from snapjax.sp_jacrev import sp_jacrev
 
 
@@ -108,10 +108,10 @@ class PTACell(RTRLCell):
         )
         return zero_jacobians
 
-    @staticmethod
-    def make_sp_pattern(cell: "PTACell") -> "PTACell":
-        # Sparsity pattern is the same one as for an RNN.
-        return RNN.make_sp_pattern(cell)
+    def make_snap_n_mask(self: RTRLCell, n: int) -> RTRLCell:
+        mask = jtu.tree_map(lambda leaf: construct_snap_n_mask(leaf, n), self)
+
+        return mask
 
 
 class PTALayer(RTRLLayer):

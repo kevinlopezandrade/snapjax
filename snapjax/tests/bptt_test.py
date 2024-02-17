@@ -1,5 +1,7 @@
 from jax import config
 
+from snapjax.sp_jacrev import make_jacobian_projection
+
 config.update("jax_enable_x64", True)
 
 import equinox as eqx
@@ -28,7 +30,7 @@ def test_no_snap_one_layer():
     inputs = get_random_sequence(T, model)
     targets = get_random_sequence(T, model)
 
-    loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=False)
+    loss, acc_grads, _ = rtrl(model, inputs, targets, use_scan=False)
     loss_bptt, acc_grads_bptt, _ = bptt(model, inputs, targets, use_scan=False)
 
     assert jnp.allclose(loss, loss_bptt)
@@ -61,7 +63,7 @@ def test_no_snap_mutliple_layers():
     inputs = get_random_sequence(T, model)
     targets = get_random_sequence(T, model)
 
-    loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=False)
+    loss, acc_grads, _ = rtrl(model, inputs, targets, use_scan=False)
     loss_bptt, acc_grads_bptt, _ = bptt(model, inputs, targets)
 
     assert jnp.allclose(loss, loss_bptt)
@@ -93,10 +95,8 @@ def test_scan_unrolled():
     inputs = get_random_sequence(T, model)
     targets = get_random_sequence(T, model)
 
-    loss, acc_grads, _ = rtrl(model, inputs, targets, use_snap_1=False, use_scan=True)
-    loss_no_scan, acc_grads_no_scan, _ = rtrl(
-        model, inputs, targets, use_snap_1=False, use_scan=False
-    )
+    loss, acc_grads, _ = rtrl(model, inputs, targets, use_scan=True)
+    loss_no_scan, acc_grads_no_scan, _ = rtrl(model, inputs, targets, use_scan=False)
 
     assert jnp.allclose(loss, loss_no_scan)
 
@@ -127,7 +127,8 @@ def test_bptt_snap_diagonal():
     T = 100
     model = get_stacked_rnn(1, 20, 20)
     model = replace_rnn_with_diagonals(model)
-    sp_tree = model.get_sp_projection_tree()
+    jacobian_mask = model.get_snap_n_mask(1)
+    jacobian_projection = make_jacobian_projection(jacobian_mask)
 
     inputs = get_random_sequence(T, model)
     targets = get_random_sequence(T, model)
@@ -136,8 +137,8 @@ def test_bptt_snap_diagonal():
         model,
         inputs,
         targets,
-        sp_projection_tree=sp_tree,
-        use_snap_1=True,
+        jacobian_mask=jacobian_mask,
+        jacobian_projection=jacobian_projection,
         use_scan=False,
     )
     loss_bptt, acc_grads_bptt, _ = bptt(model, inputs, targets, use_scan=False)

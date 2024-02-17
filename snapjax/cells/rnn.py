@@ -5,11 +5,11 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
-from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray
 
 from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
-from snapjax.sp_jacrev import sp_jacrev, sp_projection_tree
+from snapjax.cells.utils import construct_snap_n_mask
+from snapjax.sp_jacrev import sp_jacrev
 
 
 class RNN(RTRLCell):
@@ -59,35 +59,20 @@ class RNN(RTRLCell):
         )
         return zero_jacobians
 
-    @staticmethod
-    def make_sp_pattern(cell: "RNN"):
-        h = cell.hidden_size
+    def make_snap_n_mask(self, n: int) -> "RNN":
+        """
+        Mask every weight.
+        """
 
-        def _build_jacobian_bcoo(leaf):
-            if leaf.ndim == 1:
-                return BCOO.fromdense(jnp.eye(h, dtype=jnp.int32))
-            else:
-                # Assuming leaf is a matrix
-                inp = leaf.shape[1]
-                data = np.ones(h * inp, dtype=np.int32)
-                indices = np.zeros((h * inp, 2), dtype=np.int32)
-                for i in range(h):
-                    indices[(i * inp) : (i + 1) * inp, 0] = np.repeat(i, inp)
-                    indices[(i * inp) : (i + 1) * inp, 1] = np.arange(inp) + (i * inp)
+        def _get_mask(leaf: Array):
+            return construct_snap_n_mask(leaf, n)
 
-                data = jnp.array(data)
-                indices = jnp.array(indices)
-                res = BCOO(
-                    (data, indices),
-                    shape=(h, h * inp),
-                    indices_sorted=True,
-                    unique_indices=True,
-                )
-                return res
+        mask = jtu.tree_map(
+            _get_mask,
+            self,
+        )
 
-        sp = jtu.tree_map(lambda leaf: _build_jacobian_bcoo(leaf), cell)
-
-        return sp
+        return mask
 
 
 class RNNLayer(RTRLLayer):

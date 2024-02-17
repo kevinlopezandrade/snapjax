@@ -4,12 +4,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
+import jax.tree_util as jtu
+from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray
 
 from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
 from snapjax.cells.rnn import RNN
-from snapjax.sp_jacrev import sp_jacrev
-import jax.tree_util as jtu
+from snapjax.cells.utils import construct_snap_n_mask, construct_snap_n_mask_bcoo
+from snapjax.sp_jacrev import Mask, sp_jacrev
 
 
 def get_internal_weights(key: PRNGKeyArray, N: int, g: float) -> Array:
@@ -59,9 +61,99 @@ class FiringRateRNN(RTRLCell):
     def make_zero_jacobians(cell: "FiringRateRNN") -> "FiringRateRNN":
         return RNN.make_zero_jacobians(cell)
 
+    def make_snap_n_mask(self, n: int):
+        mask = jtu.tree_map(lambda leaf: construct_snap_n_mask(leaf, n), self)
+
+        return mask
+
+
+@jax.jit
+def mask_matrix(W: Array, mask: Array) -> BCOO:
+    indices = jnp.argwhere(mask)
+    data = W[indices[:, 0], indices[:, 1]]
+    mat = BCOO(
+        (data, indices), shape=W.shape, unique_indices=True, indices_sorted=False
+    )
+    mat = mat.sort_indices()
+
+    return mat
+
+
+class SparseFiringRateRNN(RTRLCell):
+    W: BCOO
+    U: Array
+    input_size: int = eqx.field(static=True)
+    hidden_size: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        W: Array,
+        U: Array,
+        sparsity_faction: float,
+        *,
+        key: PRNGKeyArray,
+    ):
+        # Sample mask for w_hh.
+        _, mask_hh_key = jrandom.split(key)
+
+        # Get matrices from linear models.
+        mask_hh = jrandom.bernoulli(
+            mask_hh_key, p=(1 - sparsity_faction), shape=W.shape
+        )
+
+        self.W = mask_matrix(W, mask_hh)
+        self.U = U
+        self.hidden_size = W.shape[0]
+        self.input_size = U.shape[1]
+
+    def f(self, state: State, input: Array) -> State:
+        h = state
+        x = input
+
+        h_new = self.W @ jnp.tanh(h) + jnp.sqrt(self.hidden_size) * (self.U @ x)
+
+        return h_new
+
     @staticmethod
-    def make_sp_pattern(cell: "FiringRateRNN") -> "FiringRateRNN":
-        return RNN.make_sp_pattern(cell)
+    def init_state(cell: "SparseFiringRateRNN") -> State:
+        return RNN.init_state(cell)
+
+    @staticmethod
+    def make_zero_jacobians(cell: "SparseFiringRateRNN") -> "SparseFiringRateRNN":
+        def _get_zero_jacobian(leaf: Array | BCOO):
+            """
+            The jacobians are still dense arrays.
+            """
+            if isinstance(leaf, BCOO):
+                return jnp.zeros((cell.hidden_size, leaf.nse))
+            else:
+                return jnp.zeros((cell.hidden_size, *leaf.shape))
+
+        zero_jacobians = jtu.tree_map(
+            _get_zero_jacobian,
+            cell,
+            is_leaf=lambda node: isinstance(node, BCOO),
+        )
+        return zero_jacobians
+
+    def make_snap_n_mask(self, n: int) -> "SparseFiringRateRNN":
+        """
+        Only mask the weights that are sparse.
+        """
+
+        def _get_mask(leaf: Array | BCOO):
+            if isinstance(leaf, BCOO):
+                return construct_snap_n_mask_bcoo(leaf, n)
+            else:
+                return Mask(jnp.ones((self.hidden_size, *leaf.shape)))
+
+        mask = jtu.tree_map(
+            _get_mask,
+            self,
+            is_leaf=lambda node: isinstance(node, BCOO),
+        )
+
+        return mask
 
 
 class ContinousRNNLayer(RTRLLayer):
