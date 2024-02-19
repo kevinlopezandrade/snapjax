@@ -34,6 +34,27 @@ def pta_matrix(alfas: List[Scalar], thetas: List[Scalar]) -> Array:
     return matrix
 
 
+def pta_weights(key: PRNGKeyArray, inp_dim: int, out_dim: int):
+    if not (out_dim % 2 == 0):
+        raise ValueError("PTA Initialization requires even number of out dim")
+    if inp_dim != out_dim:
+        raise ValueError("PTA Initialization only for square matrices.")
+
+    num_rotation_blocks = out_dim // 2
+    alfas_key, thetas_key = jax.random.split(key, 2)
+
+    # PTA Random Initialization
+    alfas_keys = jax.random.split(alfas_key, num_rotation_blocks)
+    alfas = [jax.random.uniform(key, minval=0, maxval=10) for key in alfas_keys]
+
+    thetas_keys = jax.random.split(thetas_key, num_rotation_blocks)
+    thetas = [jax.random.uniform(key, minval=0, maxval=jnp.pi) for key in thetas_keys]
+
+    weights = pta_matrix(alfas, thetas)
+
+    return weights
+
+
 class GLU(eqx.Module):
     W: eqx.nn.Linear
     V: eqx.nn.Linear

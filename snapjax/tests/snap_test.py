@@ -1,5 +1,6 @@
 from jax import config
-from jax.experimental.sparse import BCOO
+
+from snapjax.losses import masked_quadratic
 
 config.update("jax_enable_x64", True)
 
@@ -7,8 +8,9 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 
 from snapjax.algos import rtrl
-from snapjax.sp_jacrev import Mask, SparseMask, make_jacobian_projection
-from snapjax.tests.utils import get_random_sequence, get_stacked_rnn
+from snapjax.cells.utils import densify_jacobian_mask
+from snapjax.sp_jacrev import make_jacobian_projection
+from snapjax.tests.utils import get_random_mask, get_random_sequence, get_stacked_rnn
 
 ATOL = 1e-12
 RTOL = 0.0
@@ -22,33 +24,30 @@ def test_jacobians():
 
     inputs = get_random_sequence(T, model)
     targets = get_random_sequence(T, model)
+    mask = get_random_mask(T)
 
     loss, acc_grads, _ = rtrl(
         model,
         inputs,
         targets,
+        mask,
         jacobian_mask=jacobian_mask,
         jacobian_projection=jacobian_projection,
         use_scan=False,
+        loss_func=masked_quadratic,
     )
 
     # Make the jacobian mask dense.
-    jacobian_mask = jtu.tree_map(
-        lambda mask: Mask(
-            BCOO(
-                (jnp.ones(mask.indices.shape[0]), mask.indices),
-                shape=mask.shape,
-                unique_indices=True,
-            )
-            .todense()
-            .reshape(mask.orig_shape)
-        ),
-        jacobian_mask,
-        is_leaf=lambda node: isinstance(node, SparseMask),
-    )
+    jacobian_mask = densify_jacobian_mask(jacobian_mask)
 
     loss_no_sp, acc_grads_no_sp, _ = rtrl(
-        model, inputs, targets, jacobian_mask=jacobian_mask, use_scan=False
+        model,
+        inputs,
+        targets,
+        mask,
+        jacobian_mask=jacobian_mask,
+        use_scan=False,
+        loss_func=masked_quadratic,
     )
 
     assert jnp.allclose(loss, loss_no_sp)

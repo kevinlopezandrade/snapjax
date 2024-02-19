@@ -3,13 +3,19 @@ from typing import Sequence, Tuple
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.random as jrandom
 import jax.tree_util as jtu
-import numpy as np
 from jaxtyping import Array, PRNGKeyArray
 
 from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
 from snapjax.cells.utils import construct_snap_n_mask
 from snapjax.sp_jacrev import sp_jacrev
+
+
+def glorot_weights(key: PRNGKeyArray, out_dim: int, inp_dim: int):
+    lim = 1 / jnp.sqrt(inp_dim)
+    weights = jrandom.uniform(key, shape=(out_dim, inp_dim), minval=-lim, maxval=lim)
+    return weights
 
 
 class RNN(RTRLCell):

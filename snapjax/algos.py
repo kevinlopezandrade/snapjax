@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, List, Sequence, Tuple
+from typing import Callable, List, Sequence, Tuple, cast
 
 import equinox as eqx
 import jax
@@ -118,10 +118,12 @@ def compute_masked_jacobian(
 
     def _update(i_t: BCOO | Array, j_t_prev: BCOO | Array, j_mask: Mask | SparseMask):
         if isinstance(j_mask, SparseMask):
-            # j_t_prev comes as the transpose jacobian
-            # therefore we must transpose the j_mask indices.
-            sp = j_mask.indices[:, ::-1]
-            prod = dense_coo_product(dynamics, j_t_prev, sp)
+            # j_t_prev comes as the transpose jacobian.
+            # NOTE: Actually we can ignore the j_mask, since
+            # the compressed was computed using j_mask as its
+            # sparsity pattern. And we avoid transposing and sorting.
+            # We leave it just for consistency in the api.
+            prod = dense_coo_product(dynamics, j_t_prev, j_t_prev.indices)
             res = sparse_matching_addition(i_t, prod)
             return res
         else:
@@ -201,7 +203,7 @@ def update_rtrl_cells_grads(
 ):
     def matmul_by_h(ht_grad: Array, jacobian: Array | BCOO):
         if isinstance(jacobian, BCOO):
-            return (ht_grad @ jacobian.T).T
+            return (jacobian @ ht_grad.T).T
         else:
             return ht_grad @ jacobian
 
@@ -385,4 +387,6 @@ def rtrl(
 
     h_T, acc_grads, jacobians_T, acc_loss = carry_T
 
+    acc_loss = cast(float, acc_loss)
+    y_hats = cast(Array, y_hats)
     return acc_loss, acc_grads, y_hats

@@ -193,8 +193,8 @@ def flip_flop_sequence(
 def gen_flipflop(N: int, key: PRNGKeyArray, **params):
     with jax.default_device(jax.devices("cpu")[0]):
         keys = jrandom.split(key, N)
-        for key in keys:
-            yield flip_flop_sequence(key, **params)
+        for i in range(N):
+            yield flip_flop_sequence(key=keys[i], **params)
 
 
 ########################################################################################

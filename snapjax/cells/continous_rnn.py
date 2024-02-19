@@ -67,7 +67,6 @@ class FiringRateRNN(RTRLCell):
         return mask
 
 
-@jax.jit
 def mask_matrix(W: Array, mask: Array) -> BCOO:
     indices = jnp.argwhere(mask)
     data = W[indices[:, 0], indices[:, 1]]
@@ -89,17 +88,12 @@ class SparseFiringRateRNN(RTRLCell):
         self,
         W: Array,
         U: Array,
-        sparsity_faction: float,
+        sparsity_fraction: float,
         *,
         key: PRNGKeyArray,
     ):
-        # Sample mask for w_hh.
-        _, mask_hh_key = jrandom.split(key)
-
         # Get matrices from linear models.
-        mask_hh = jrandom.bernoulli(
-            mask_hh_key, p=(1 - sparsity_faction), shape=W.shape
-        )
+        mask_hh = jrandom.bernoulli(key, p=(1 - sparsity_fraction), shape=W.shape)
 
         self.W = mask_matrix(W, mask_hh)
         self.U = U
