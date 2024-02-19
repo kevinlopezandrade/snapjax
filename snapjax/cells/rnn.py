@@ -5,10 +5,11 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
+from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray
 
 from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
-from snapjax.cells.utils import construct_snap_n_mask
+from snapjax.cells.utils import snap_n_mask, snap_n_mask_bcoo
 from snapjax.sp_jacrev import sp_jacrev
 
 
@@ -71,11 +72,13 @@ class RNN(RTRLCell):
         """
 
         def _get_mask(leaf: Array):
-            return construct_snap_n_mask(leaf, n)
+            if isinstance(leaf, BCOO):
+                return snap_n_mask_bcoo(leaf, n)
+            else:
+                return snap_n_mask(leaf, n)
 
         mask = jtu.tree_map(
-            _get_mask,
-            self,
+            _get_mask, self, is_leaf=lambda node: isinstance(node, BCOO)
         )
 
         return mask

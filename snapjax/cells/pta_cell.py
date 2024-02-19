@@ -8,7 +8,7 @@ import jax.tree_util as jtu
 from jaxtyping import Array, PRNGKeyArray, Scalar
 
 from snapjax.cells.base import RTRLCell, RTRLLayer, State
-from snapjax.cells.utils import construct_snap_n_mask
+from snapjax.cells.utils import snap_n_mask
 from snapjax.sp_jacrev import sp_jacrev
 
 
@@ -130,7 +130,7 @@ class PTACell(RTRLCell):
         return zero_jacobians
 
     def make_snap_n_mask(self: RTRLCell, n: int) -> RTRLCell:
-        mask = jtu.tree_map(lambda leaf: construct_snap_n_mask(leaf, n), self)
+        mask = jtu.tree_map(lambda leaf: snap_n_mask(leaf, n), self)
 
         return mask
 

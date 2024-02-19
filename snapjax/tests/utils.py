@@ -4,6 +4,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
+from jax.experimental.sparse import BCOO
 from jaxtyping import Array
 
 from snapjax.cells.base import RTRLStacked, is_rtrl_cell
@@ -119,12 +120,18 @@ def get_random_mask_batch(N: int, T: int, seed: int | None = None):
     return mask
 
 
-def replace_rnn_with_diagonals(model: StackedCell):
+def replace_rnn_with_diagonals(model: StackedCell, sparse_weights: bool = False):
     # Replace by diagonal matrices.
     # Ugly but works.
     # Hack for the nn.RNN
     class MatrixCallable(eqx.Module):
-        W: Array
+        W: Array | BCOO
+
+        def __init__(self, W):
+            if sparse_weights:
+                self.W = BCOO.fromdense(W)
+            else:
+                self.W = W
 
         def __call__(self, x):
             return self.W @ x

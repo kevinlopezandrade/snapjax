@@ -10,7 +10,7 @@ from jaxtyping import Array, PRNGKeyArray
 
 from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
 from snapjax.cells.rnn import RNN
-from snapjax.cells.utils import construct_snap_n_mask, construct_snap_n_mask_bcoo
+from snapjax.cells.utils import snap_n_mask, snap_n_mask_bcoo
 from snapjax.sp_jacrev import Mask, sp_jacrev
 
 
@@ -62,7 +62,7 @@ class FiringRateRNN(RTRLCell):
         return RNN.make_zero_jacobians(cell)
 
     def make_snap_n_mask(self, n: int):
-        mask = jtu.tree_map(lambda leaf: construct_snap_n_mask(leaf, n), self)
+        mask = jtu.tree_map(lambda leaf: snap_n_mask(leaf, n), self)
 
         return mask
 
@@ -137,7 +137,7 @@ class SparseFiringRateRNN(RTRLCell):
 
         def _get_mask(leaf: Array | BCOO):
             if isinstance(leaf, BCOO):
-                return construct_snap_n_mask_bcoo(leaf, n)
+                return snap_n_mask_bcoo(leaf, n)
             else:
                 return Mask(jnp.ones((self.hidden_size, *leaf.shape)))
 

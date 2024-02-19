@@ -88,10 +88,64 @@ def test_snap_n_indices():
     assert is_subset_pytree(mask_snap_1, mask_snap_2)
 
 
-def test_dense_sparse_snap_n():
+def test_dense_sparse_snap_2():
     T = 150
     model = get_sparse_continous_rnn(100, 100, sparsity_fraction=0.90)
     jacobian_mask = model.get_snap_n_mask(2)
+    jacobian_projection = make_jacobian_projection(jacobian_mask)
+
+    inputs = get_random_sequence(T, model)
+    targets = get_random_sequence(T, model)
+    mask = jnp.ones((targets.shape[0],))
+
+    loss, acc_grads, _ = rtrl(
+        model,
+        inputs,
+        targets,
+        mask,
+        jacobian_mask=jacobian_mask,
+        jacobian_projection=jacobian_projection,
+        use_scan=False,
+        loss_func=masked_quadratic,
+    )
+
+    jacobian_mask_dense = densify_jacobian_mask(jacobian_mask)
+    jacobian_projection_dense = make_dense_jacobian_projection(jacobian_projection)
+    loss_no_sp, acc_grads_no_sp, _ = rtrl(
+        model,
+        inputs,
+        targets,
+        mask,
+        jacobian_mask=jacobian_mask_dense,
+        jacobian_projection=jacobian_projection_dense,
+        use_scan=False,
+        loss_func=masked_quadratic,
+    )
+
+    assert jnp.allclose(loss, loss_no_sp)
+
+    print("Comparing BPTT and RTRL with sparse weight matrices.")
+    passed = True
+    for (key_a, leaf_a), (key_b, leaf_b) in zip(
+        jtu.tree_leaves_with_path(acc_grads), jtu.tree_leaves_with_path(acc_grads_no_sp)
+    ):
+        if jnp.allclose(leaf_a, leaf_b, atol=ATOL, rtol=RTOL):
+            print("Match", jtu.keystr(key_a))
+            print("\tMax difference: ", jnp.max(jnp.abs(leaf_a - leaf_b)))
+            print("\tMean difference: ", jnp.mean(jnp.abs(leaf_a - leaf_b)))
+        else:
+            print("Don't Match", jtu.keystr(key_a))
+            print("\tMax difference: ", jnp.max(jnp.abs(leaf_a - leaf_b)))
+            print("\tMean difference: ", jnp.mean(jnp.abs(leaf_a - leaf_b)))
+            passed = False
+
+    assert passed
+
+
+def test_dense_sparse_snap_3():
+    T = 150
+    model = get_sparse_continous_rnn(100, 100, sparsity_fraction=0.99)
+    jacobian_mask = model.get_snap_n_mask(3)
     jacobian_projection = make_jacobian_projection(jacobian_mask)
 
     inputs = get_random_sequence(T, model)

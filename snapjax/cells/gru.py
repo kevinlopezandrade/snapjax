@@ -9,7 +9,7 @@ import jax.tree_util as jtu
 from jaxtyping import Array, PRNGKeyArray
 
 from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
-from snapjax.cells.utils import construct_snap_n_mask
+from snapjax.cells.utils import snap_n_mask
 from snapjax.sp_jacrev import sp_jacrev
 
 
@@ -71,7 +71,7 @@ class GRU(RTRLCell):
 
     def make_snap_n_mask(self, n: int):
         mask = jtu.tree_map(
-            lambda leaf: construct_snap_n_mask(leaf, n),
+            lambda leaf: snap_n_mask(leaf, n),
             self,
         )
 
