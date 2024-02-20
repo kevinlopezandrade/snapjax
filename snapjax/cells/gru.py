@@ -3,7 +3,6 @@ from typing import Tuple
 import equinox as eqx
 import equinox.nn as nn
 import jax
-import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
 from jaxtyping import Array, PRNGKeyArray
@@ -57,17 +56,6 @@ class GRU(RTRLCell):
         h_new = (1 - z) * h + z * a
 
         return h_new
-
-    @staticmethod
-    def init_state(cell: "GRU"):
-        return jnp.zeros(cell.hidden_size)
-
-    @staticmethod
-    def make_zero_jacobians(cell: "GRU"):
-        zero_jacobians = jtu.tree_map(
-            lambda leaf: jnp.zeros((cell.hidden_size, *leaf.shape)), cell
-        )
-        return zero_jacobians
 
     def make_snap_n_mask(self, n: int):
         mask = jtu.tree_map(

@@ -47,7 +47,7 @@ def make_zeros_jacobians(model: RTRLStacked):
     cells = eqx.filter(model, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell)
 
     def _cell_zero_jacobian(cell: RTRLCell):
-        return cell.make_zero_jacobians(cell)
+        return cell.make_zero_jacobians()
 
     zero_jacobians = jtu.tree_map(
         lambda cell: _cell_zero_jacobian(cell),
@@ -311,7 +311,7 @@ def make_init_state(model: RTRLStacked):
     for layer in model.layers:
         if isinstance(layer, RTRLLayer):
             cell = layer.cell
-            states.append(type(cell).init_state(cell))
+            states.append(cell.init_state())
 
     return tuple(states)
 

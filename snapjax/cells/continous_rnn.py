@@ -9,7 +9,6 @@ from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray
 
 from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
-from snapjax.cells.rnn import RNN
 from snapjax.cells.utils import snap_n_mask, snap_n_mask_bcoo
 from snapjax.sp_jacrev import Mask, sp_jacrev
 
@@ -53,14 +52,6 @@ class FiringRateRNN(RTRLCell):
 
         return h_new
 
-    @staticmethod
-    def init_state(cell: "FiringRateRNN") -> State:
-        return RNN.init_state(cell)
-
-    @staticmethod
-    def make_zero_jacobians(cell: "FiringRateRNN") -> "FiringRateRNN":
-        return RNN.make_zero_jacobians(cell)
-
     def make_snap_n_mask(self, n: int):
         mask = jtu.tree_map(lambda leaf: snap_n_mask(leaf, n), self)
 
@@ -92,7 +83,6 @@ class SparseFiringRateRNN(RTRLCell):
         *,
         key: PRNGKeyArray,
     ):
-        # Get matrices from linear models.
         mask_hh = jrandom.bernoulli(key, p=(1 - sparsity_fraction), shape=W.shape)
 
         self.W = mask_matrix(W, mask_hh)
@@ -108,12 +98,7 @@ class SparseFiringRateRNN(RTRLCell):
 
         return h_new
 
-    @staticmethod
-    def init_state(cell: "SparseFiringRateRNN") -> State:
-        return RNN.init_state(cell)
-
-    @staticmethod
-    def make_zero_jacobians(cell: "SparseFiringRateRNN") -> "SparseFiringRateRNN":
+    def make_zero_jacobians(self) -> "SparseFiringRateRNN":
         def _get_zero_jacobian(leaf: Array | BCOO):
             """
             The jacobians are still dense arrays.

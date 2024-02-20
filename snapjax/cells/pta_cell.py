@@ -118,17 +118,6 @@ class PTACell(RTRLCell):
 
         return h_new
 
-    @staticmethod
-    def init_state(cell: "PTACell") -> State:
-        return jnp.zeros(cell.hidden_size)
-
-    @staticmethod
-    def make_zero_jacobians(cell: "PTACell") -> "PTACell":
-        zero_jacobians = jtu.tree_map(
-            lambda leaf: jnp.zeros((cell.hidden_size, *leaf.shape)), cell
-        )
-        return zero_jacobians
-
     def make_snap_n_mask(self: RTRLCell, n: int) -> RTRLCell:
         mask = jtu.tree_map(lambda leaf: snap_n_mask(leaf, n), self)
 

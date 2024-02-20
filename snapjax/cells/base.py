@@ -3,10 +3,11 @@ from typing import Any, List, Sequence, Tuple
 
 import equinox as eqx
 import jax
+import jax.numpy as jnp
 import jax.tree_util as jtu
 from jaxtyping import Array
 
-State = Sequence[Array]
+State = Sequence[Array] | Array
 Jacobians = Tuple["RTRLCell", Array]  # I_t, D_t
 Stacked = Sequence
 
@@ -22,13 +23,20 @@ class RTRLCell(eqx.Module):
     @abstractmethod
     def f(self, state: State, input: Array) -> State: ...
 
-    @staticmethod
-    @abstractmethod
-    def init_state(cell: "RTRLCell") -> State: ...
+    def init_state(self) -> State:
+        """
+        Default method, override for different implementations.
+        """
+        return jnp.zeros(self.hidden_size)
 
-    @staticmethod
-    @abstractmethod
-    def make_zero_jacobians(cell: "RTRLCell") -> "RTRLCell": ...
+    def make_zero_jacobians(self) -> "RTRLCell":
+        """
+        Default method, override for different implementations.
+        """
+        zero_jacobians = jtu.tree_map(
+            lambda leaf: jnp.zeros((self.hidden_size, *leaf.shape)), self
+        )
+        return zero_jacobians
 
     @abstractmethod
     def make_snap_n_mask(self: "RTRLCell", n: int) -> "RTRLCell": ...

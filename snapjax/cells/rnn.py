@@ -55,17 +55,6 @@ class RNN(RTRLCell):
 
         return h_new
 
-    @staticmethod
-    def init_state(cell: "RNN"):
-        return jnp.zeros(cell.hidden_size)
-
-    @staticmethod
-    def make_zero_jacobians(cell: "RNN"):
-        zero_jacobians = jtu.tree_map(
-            lambda leaf: jnp.zeros((cell.hidden_size, *leaf.shape)), cell
-        )
-        return zero_jacobians
-
     def make_snap_n_mask(self, n: int) -> "RNN":
         """
         Mask every weight.
