@@ -8,12 +8,9 @@ from jax.experimental.sparse import BCOO
 from jaxtyping import Array
 
 from snapjax.cells.base import RTRLStacked, is_rtrl_cell
-from snapjax.cells.continous_rnn import (
-    ContinousRNNLayer,
-    SparseFiringRateRNN,
-    get_random_vectors,
-)
-from snapjax.cells.rnn import RNN, RNNLayer, glorot_weights
+from snapjax.cells.continous_rnn import ContinousRNNLayer, SparseFiringRateRNN
+from snapjax.cells.initializers import glorot_weights, normal_channels
+from snapjax.cells.rnn import RNN, RNNLayer
 from snapjax.cells.stacked import StackedCell
 from snapjax.sp_jacrev import DenseProjection, Mask, SparseMask, SparseProjection
 
@@ -55,8 +52,8 @@ def get_sparse_continous_rnn(
 
     w_key, u_key, c_key, sp_key = jrandom.split(jrandom.PRNGKey(key), 4)
     W_0 = glorot_weights(w_key, inp_dim=hidden_size, out_dim=hidden_size)
-    U = get_random_vectors(u_key, inp_dim=input_size, out_dim=hidden_size)
-    C = get_random_vectors(c_key, inp_dim=hidden_size, out_dim=input_size)
+    U = normal_channels(u_key, inp_dim=input_size, out_dim=hidden_size)
+    C = normal_channels(c_key, inp_dim=hidden_size, out_dim=input_size)
 
     cell = SparseFiringRateRNN(W_0, U, sparsity_fraction=sparsity_fraction, key=sp_key)
     rnn = ContinousRNNLayer(C, cell=cell, dt=0.5)

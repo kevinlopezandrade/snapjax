@@ -8,51 +8,9 @@ import jax.tree_util as jtu
 from jaxtyping import Array, PRNGKeyArray, Scalar
 
 from snapjax.cells.base import RTRLCell, RTRLLayer, State
+from snapjax.cells.initializers import pta_matrix
 from snapjax.cells.utils import snap_n_mask
 from snapjax.sp_jacrev import sp_jacrev
-
-
-def scaled_rotation_matrix(theta: Scalar, alfa: Scalar) -> Array:
-    matrix = jnp.zeros((2, 2), dtype=jnp.float32)
-
-    matrix = matrix.at[0, 0].set(jnp.cos(theta))
-    matrix = matrix.at[0, 1].set(-jnp.sin(theta))
-    matrix = matrix.at[1, 0].set(jnp.sin(theta))
-    matrix = matrix.at[1, 1].set(jnp.cos(theta))
-
-    return alfa * matrix
-
-
-def pta_matrix(alfas: List[Scalar], thetas: List[Scalar]) -> Array:
-    blocks: List[Array] = []
-    for alfa, theta in zip(alfas, thetas):
-        rot = scaled_rotation_matrix(alfa, theta)
-        blocks.append(rot)
-
-    matrix = jax.scipy.linalg.block_diag(*blocks)
-
-    return matrix
-
-
-def pta_weights(key: PRNGKeyArray, inp_dim: int, out_dim: int):
-    if not (out_dim % 2 == 0):
-        raise ValueError("PTA Initialization requires even number of out dim")
-    if inp_dim != out_dim:
-        raise ValueError("PTA Initialization only for square matrices.")
-
-    num_rotation_blocks = out_dim // 2
-    alfas_key, thetas_key = jax.random.split(key, 2)
-
-    # PTA Random Initialization
-    alfas_keys = jax.random.split(alfas_key, num_rotation_blocks)
-    alfas = [jax.random.uniform(key, minval=0, maxval=10) for key in alfas_keys]
-
-    thetas_keys = jax.random.split(thetas_key, num_rotation_blocks)
-    thetas = [jax.random.uniform(key, minval=0, maxval=jnp.pi) for key in thetas_keys]
-
-    weights = pta_matrix(alfas, thetas)
-
-    return weights
 
 
 class GLU(eqx.Module):

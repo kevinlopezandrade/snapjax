@@ -13,12 +13,6 @@ from snapjax.cells.utils import snap_n_mask, snap_n_mask_bcoo
 from snapjax.sp_jacrev import sp_jacrev
 
 
-def glorot_weights(key: PRNGKeyArray, out_dim: int, inp_dim: int):
-    lim = 1 / jnp.sqrt(inp_dim)
-    weights = jrandom.uniform(key, shape=(out_dim, inp_dim), minval=-lim, maxval=lim)
-    return weights
-
-
 class RNN(RTRLCell):
     weights_hh: eqx.nn.Linear
     weights_ih: eqx.nn.Linear

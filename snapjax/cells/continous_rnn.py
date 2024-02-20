@@ -13,24 +13,6 @@ from snapjax.cells.utils import snap_n_mask, snap_n_mask_bcoo
 from snapjax.sp_jacrev import Mask, sp_jacrev
 
 
-def get_internal_weights(key: PRNGKeyArray, N: int, g: float) -> Array:
-    key, _ = jrandom.split(key)
-    variance = (g**2) / N
-    weights = jrandom.normal(key, shape=(N, N))
-    weights = jnp.sqrt(variance) * weights
-
-    return weights
-
-
-def get_random_vectors(key: PRNGKeyArray, out_dim: int, inp_dim: int) -> Array:
-    key, _ = jrandom.split(key)
-    variance = 1 / out_dim
-    weights = jrandom.normal(key, shape=(out_dim, inp_dim))
-    weights = jnp.sqrt(variance) * weights
-
-    return weights
-
-
 class FiringRateRNN(RTRLCell):
     W: Array  # mxm
     U: Array  # mxd
