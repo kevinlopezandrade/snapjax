@@ -13,6 +13,7 @@ from snapjax.cells.base import RTRLCell, RTRLLayer, RTRLStacked, State, is_rtrl_
 from snapjax.losses import l2
 from snapjax.sp_jacrev import DenseProjection, Mask, SparseMask, SparseProjection
 from snapjax.spp_primitives.primitives import spp_csr_matmul
+from snapjax.utils import standard_jacobian
 
 config.update("jax_numpy_rank_promotion", "raise")
 
@@ -47,7 +48,9 @@ def make_zeros_jacobians(model: RTRLStacked):
     cells = eqx.filter(model, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell)
 
     def _cell_zero_jacobian(cell: RTRLCell):
-        return cell.make_zero_jacobians()
+        return jtu.tree_map(
+            lambda leaf: standard_jacobian(leaf), cell.make_zero_jacobians()
+        )
 
     zero_jacobians = jtu.tree_map(
         lambda cell: _cell_zero_jacobian(cell),
@@ -127,7 +130,9 @@ def compute_masked_jacobian(
             res = sparse_matching_addition(i_t, prod)
             return res
         else:
-            return j_mask.mask * (i_t + dynamics @ j_t_prev)
+            return standard_jacobian(j_mask.mask) * (
+                standard_jacobian(i_t) + dynamics @ standard_jacobian(j_t_prev)
+            )
 
     J_t = jax.tree_map(
         lambda i_t, j_t_prev, j_mask: _update(i_t, j_t_prev, j_mask),
@@ -153,7 +158,8 @@ def update_cell_jacobians(
         return J_t
     else:
         J_t = jax.tree_map(
-            lambda i_t, j_t_prev: i_t + dynamics @ j_t_prev,
+            lambda i_t, j_t_prev: standard_jacobian(i_t)
+            + dynamics @ standard_jacobian(j_t_prev),
             I_t,
             J_t_prev,
         )

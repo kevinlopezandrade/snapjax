@@ -194,6 +194,7 @@ def test_bptt_snap_2_dense_rnn():
     model = get_stacked_rnn(1, 20, 20)
     jacobian_mask = model.get_snap_n_mask(2)
     jacobian_mask = densify_jacobian_mask(jacobian_mask)
+    jacobian_projection = make_jacobian_projection(jacobian_mask)
 
     inputs = get_random_sequence(T, model)
     targets = get_random_sequence(T, model)
@@ -205,6 +206,7 @@ def test_bptt_snap_2_dense_rnn():
         targets,
         mask,
         jacobian_mask=jacobian_mask,
+        jacobian_projection=jacobian_projection,
         use_scan=False,
         loss_func=masked_quadratic,
     )

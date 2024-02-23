@@ -16,6 +16,8 @@ from jax.experimental.sparse.bcoo import BCOO
 from jax.extend.linear_util import wrap_init
 from jaxtyping import Array, PyTree
 
+from snapjax.utils import standard_jacobian
+
 _T = TypeVar("_T")
 is_sparse = lambda x: isinstance(x, JAXSparse)
 
@@ -295,10 +297,14 @@ def apply_sp_pullback(
     if isinstance(sp, DenseProjection):
         return jax.vmap(lambda ct: pullback(ct)[0])(sp.projection_matrix)
 
+    # NOTE: When you evaluate pullback to a cotangent vector even if the
+    # jacobian jax gives if you use jax.jacobian is of 3 or more dimensions
+    # what is actually doing in pullback is the v @ jacobian.reshape(output_dim, -1)
+    # as it should be doing, but then it gives you a reshaped version.
     compressed_jacobian = jax.vmap(lambda ct: pullback(ct)[0])(sp.projection_matrix)
     # Reshape is needed since the sparse patterns are only 2d dimensional. But the jvp
     # returns 3d arrays.
-    compressed_jacobian = compressed_jacobian.reshape(compressed_jacobian.shape[0], -1)
+    compressed_jacobian = standard_jacobian(compressed_jacobian)
 
     return _expand_jacrev_jac(
         compressed_jacobian, sp.output_coloring, sp.sparse_def, transpose

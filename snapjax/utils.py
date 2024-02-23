@@ -10,6 +10,7 @@ from optax._src.base import GradientTransformation
 from snapjax.cells.base import RTRLStacked
 
 
+@jax.jit
 def sparse_aware_update(model: RTRLStacked, updates: RTRLStacked):
     """
     For models that contain weights as BCOO arrays.
@@ -62,3 +63,7 @@ def sparse_aware_init(model: RTRLStacked, optimizer: GradientTransformation):
     )
 
     return optim_state
+
+
+def standard_jacobian(jacobian: Array) -> Array:
+    return jacobian.reshape(jacobian.shape[0], -1)
