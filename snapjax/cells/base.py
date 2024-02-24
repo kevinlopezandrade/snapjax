@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Any, List, Sequence, Tuple
+from typing import Any, Generic, List, Sequence, Tuple, TypeVar
 
 import equinox as eqx
 import jax
@@ -7,12 +7,16 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from jaxtyping import Array
 
+from snapjax.sp_jacrev import sp_jacrev
+
 State = Sequence[Array] | Array
-Jacobians = Tuple["RTRLCell", Array]  # I_t, D_t
 Stacked = Sequence
 
+T = TypeVar("T")
+Jacobians = Tuple[T, Array]
 
-class RTRLCell(eqx.Module):
+
+class RTRLCell(eqx.Module, Generic[T]):
     """
     s_(t) = f(s_(t-1), x(t))
     """
@@ -23,13 +27,37 @@ class RTRLCell(eqx.Module):
     @abstractmethod
     def f(self, state: State, input: Array) -> State: ...
 
+    def value_and_jacobian(
+        self, state: State, input: Array, jacobian_projection: T | None = None
+    ) -> Tuple[State, Jacobians[T]]:
+        """
+        If jacobian_projection is passed, it provides the sparse projection
+        matrix of the jacobian.
+        """
+        if jacobian_projection:
+            sp_jacobian_fun = sp_jacrev(
+                jtu.Partial(self.f.__func__, state=state, input=input),
+                jacobian_projection,
+                transpose=True,
+            )
+
+            inmediate_jacobian = sp_jacobian_fun(self)
+            dynamics_fun = jax.jacrev(self.f.__func__, argnums=1)
+            dynamics = dynamics_fun(self, state, input)
+        else:
+            jacobian_func = jax.jacrev(self.f.__func__, argnums=(0, 1))
+            inmediate_jacobian, dynamics = jacobian_func(self, state, input)
+
+        h = self.f(state, input)
+        return h, (inmediate_jacobian, dynamics)
+
     def init_state(self) -> State:
         """
         Default method, override for different implementations.
         """
         return jnp.zeros(self.hidden_size)
 
-    def make_zero_jacobians(self) -> "RTRLCell":
+    def make_zero_jacobians(self) -> T:
         """
         Default method, override for different implementations.
         """
@@ -39,7 +67,7 @@ class RTRLCell(eqx.Module):
         return zero_jacobians
 
     @abstractmethod
-    def make_snap_n_mask(self: "RTRLCell", n: int) -> "RTRLCell": ...
+    def make_snap_n_mask(self, n: int) -> T: ...
 
 
 class RTRLLayer(eqx.Module):
@@ -48,7 +76,7 @@ class RTRLLayer(eqx.Module):
     where theta_t = (jacobians, dynamics).
     """
 
-    cell: eqx.AbstractVar[RTRLCell]
+    cell: eqx.AbstractVar[RTRLCell[T]]
     d_inp: eqx.AbstractVar[int]
     d_out: eqx.AbstractVar[int]
 
@@ -58,8 +86,8 @@ class RTRLLayer(eqx.Module):
         state: State,
         input: Array,
         perturbation: Array,
-        sp_projection_cell: RTRLCell = None,
-    ) -> Tuple[State, Jacobians, Array]:
+        sp_projection_cell: RTRLCell[T] | None = None,
+    ) -> Tuple[State, Jacobians[RTRLCell[T]], Array]:
         """
         If sp_projection_cell is not None, then the sparse jacobians must be
         returned as transposed jacobians for efficieny in the algorithm.
@@ -88,7 +116,7 @@ class RTRLStacked(eqx.Module):
         input: Array,
         perturbations: Stacked[Array],
         sp_projection_tree: "RTRLStacked" = None,
-    ) -> Tuple[Stacked[State], Stacked[Jacobians], Array]: ...
+    ) -> Tuple[Stacked[State], Stacked[Jacobians[RTRLCell[Any]]], Array]: ...
 
     def f_bptt(
         self, state: Stacked[State], input: Array

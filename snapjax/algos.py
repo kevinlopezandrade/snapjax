@@ -13,7 +13,7 @@ from snapjax.cells.base import RTRLCell, RTRLLayer, RTRLStacked, State, is_rtrl_
 from snapjax.losses import l2
 from snapjax.sp_jacrev import DenseProjection, Mask, SparseMask, SparseProjection
 from snapjax.spp_primitives.primitives import spp_csr_matmul
-from snapjax.utils import standard_jacobian
+from snapjax.sp_jacrev import standard_jacobian
 
 config.update("jax_numpy_rank_promotion", "raise")
 

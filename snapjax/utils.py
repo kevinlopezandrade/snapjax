@@ -63,7 +63,3 @@ def sparse_aware_init(model: RTRLStacked, optimizer: GradientTransformation):
     )
 
     return optim_state
-
-
-def standard_jacobian(jacobian: Array) -> Array:
-    return jacobian.reshape(jacobian.shape[0], -1)

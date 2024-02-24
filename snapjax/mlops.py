@@ -63,11 +63,11 @@ def ensure_static_codebase(
             messages = []
             if modified_or_staged_files:
                 messages.append(
-                    "Your working tree is not clean. There are modified or staged files."
+                    "Warning: Your working tree is not clean. There are modified or staged files."
                 )
             if untracked_outside_excluded:
                 messages.append(
-                    "There are untracked files not being tracked by Git outside the excluded directories:"
+                    "Warning: There are untracked files not being tracked by Git outside the excluded directories:"
                 )
                 messages.extend([f" - {file}" for file in untracked_outside_excluded])
 
@@ -76,7 +76,7 @@ def ensure_static_codebase(
             if strict:
                 raise RuntimeError(full_message)
             else:
-                print("Warning:", full_message)
+                print(full_message)
 
     except subprocess.CalledProcessError as e:
         error_msg = f"Error checking Git status: {e.output.decode().strip()}"

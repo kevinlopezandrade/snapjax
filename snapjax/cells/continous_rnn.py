@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Any, Generic, Tuple, TypeVar
 
 import equinox as eqx
 import jax
@@ -13,15 +13,17 @@ from snapjax.cells.utils import snap_n_mask, snap_n_mask_bcoo
 from snapjax.sp_jacrev import Mask, sp_jacrev
 
 
-class FiringRateRNN(RTRLCell):
+class FiringRateRNN(RTRLCell["FiringRateRNN"]):
     W: Array  # mxm
     U: Array  # mxd
+    dt: float = eqx.field(static=True)
     input_size: int = eqx.field(static=True)
     hidden_size: int = eqx.field(static=True)
 
-    def __init__(self, W: Array, U: Array) -> None:
+    def __init__(self, W: Array, U: Array, dt: float) -> None:
         self.W = W
         self.U = U
+        self.dt = dt
 
         self.input_size = U.shape[1]
         self.hidden_size = W.shape[0]
@@ -31,6 +33,7 @@ class FiringRateRNN(RTRLCell):
         x = input
 
         h_new = self.W @ jnp.tanh(h) + jnp.sqrt(self.hidden_size) * (self.U @ x)
+        h_new = (1 - self.dt) * state + self.dt * h_new
 
         return h_new
 
@@ -51,9 +54,10 @@ def mask_matrix(W: Array, mask: Array) -> BCOO:
     return mat
 
 
-class SparseFiringRateRNN(RTRLCell):
+class SparseFiringRateRNN(RTRLCell["SparseFiringRateRNN"]):
     W: BCOO
     U: Array
+    dt: float = eqx.field(static=True)
     input_size: int = eqx.field(static=True)
     hidden_size: int = eqx.field(static=True)
 
@@ -61,6 +65,7 @@ class SparseFiringRateRNN(RTRLCell):
         self,
         W: Array,
         U: Array,
+        dt: float,
         sparsity_fraction: float,
         *,
         key: PRNGKeyArray,
@@ -69,6 +74,7 @@ class SparseFiringRateRNN(RTRLCell):
 
         self.W = mask_matrix(W, mask_hh)
         self.U = U
+        self.dt = dt
         self.hidden_size = W.shape[0]
         self.input_size = U.shape[1]
 
@@ -77,6 +83,7 @@ class SparseFiringRateRNN(RTRLCell):
         x = input
 
         h_new = self.W @ jnp.tanh(h) + jnp.sqrt(self.hidden_size) * (self.U @ x)
+        h_new = (1 - self.dt) * h + self.dt * h_new
 
         return h_new
 
@@ -117,59 +124,39 @@ class SparseFiringRateRNN(RTRLCell):
         return mask
 
 
-class ContinousRNNLayer(RTRLLayer):
-    cell: RTRLCell
+G = TypeVar("G")
+
+
+class LinearTanhReadout(RTRLLayer):
+    cell: RTRLCell[G]
     C: Array
     d_inp: int = eqx.field(static=True)
     d_out: int = eqx.field(static=True)
-    dt: float = eqx.field(static=True)
 
-    def __init__(self, c: Array, cell: RTRLCell, dt: float) -> None:
+    def __init__(self, c: Array, cell: RTRLCell[G]) -> None:
         self.C = c
         self.cell = cell
-        self.dt = dt
 
         self.d_inp = self.cell.input_size
         self.d_out = c.shape[0]
-
-    @staticmethod
-    def _step(cell: RTRLCell, state: State, input: Array, dt: float):
-        h_out = cell.f.__func__(cell, state, input)
-        h_out = (1 - dt) * state + (dt * h_out)
-        return h_out
 
     def f(
         self,
         state: State,
         input: Array,
         perturbation: Array,
-        sp_projection_cell: RTRLCell = None,
-    ) -> Tuple[State, Jacobians, Array]:
-        # Compute Jacobian and dynamics
-        if sp_projection_cell:
-            sp_jacobian_fun = sp_jacrev(
-                jtu.Partial(self._step, state=state, input=input, dt=self.dt),
-                sp_projection_cell,
-                transpose=True,
-            )
-            inmediate_jacobian = sp_jacobian_fun(self.cell)
-            dynamics_fun = jax.jacrev(self._step, argnums=1)
-            dynamics = dynamics_fun(self.cell, state, input, self.dt)
-        else:
-            jacobian_func = jax.jacrev(self._step, argnums=(0, 1))
-            inmediate_jacobian, dynamics = jacobian_func(
-                self.cell, state, input, self.dt
-            )
-
-        # Proper discretization.
-        h_out = self._step(self.cell, state, input, self.dt) + perturbation
+        sp_projection_cell: RTRLCell[G] | None = None,
+    ) -> Tuple[State, Jacobians[RTRLCell[G]], Array]:
+        h_out, jacobians = self.cell.value_and_jacobian(
+            state, input, sp_projection_cell
+        )
+        h_out = h_out + perturbation
         y_out = self.C @ jnp.tanh(h_out)
 
-        return h_out, (inmediate_jacobian, dynamics), y_out
+        return h_out, jacobians, y_out
 
     def f_bptt(self, state: State, input: Array) -> Tuple[State, Array]:
         h_out = self.cell.f(state, input)
-        h_out = (1 - self.dt) * state + (self.dt * h_out)
         y_out = self.C @ jnp.tanh(h_out)
 
         return h_out, y_out

@@ -1,19 +1,17 @@
-from typing import Sequence, Tuple
+from typing import Tuple
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jrandom
 import jax.tree_util as jtu
 from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray
 
 from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
 from snapjax.cells.utils import snap_n_mask, snap_n_mask_bcoo
-from snapjax.sp_jacrev import sp_jacrev
 
 
-class RNN(RTRLCell):
+class RNN(RTRLCell["RNN"]):
     weights_hh: eqx.nn.Linear
     weights_ih: eqx.nn.Linear
     input_size: int = eqx.field(static=True)
@@ -41,7 +39,7 @@ class RNN(RTRLCell):
         self.input_size = input_size
         self.use_bias = use_bias
 
-    def f(self, state: Sequence[Array], input: Array) -> Array:
+    def f(self, state: State, input: Array) -> Array:
         h = state
         x = input
 
@@ -95,27 +93,18 @@ class RNNLayer(RTRLLayer):
         state: State,
         input: Array,
         perturbation: Array,
-        sp_projection_cell: RNN = None,
-    ) -> Tuple[State, Jacobians, Array]:
+        sp_projection_cell: RNN | None = None,
+    ) -> Tuple[State, Jacobians[RNN], Array]:
         """
         Returns h_(t), y_(t)
         """
         # To the RNN Cell
-        h_out = self.cell.f(state, input) + perturbation
+        h_out, jacobians = self.cell.value_and_jacobian(
+            state, input, sp_projection_cell
+        )
+        inmediate_jacobian, dynamics = jacobians
 
-        # Compute Jacobian and dynamics
-        if sp_projection_cell:
-            sp_jacobian_fun = sp_jacrev(
-                jtu.Partial(RNN.f, state=state, input=input),
-                sp_projection_cell,
-                transpose=True,
-            )
-            inmediate_jacobian = sp_jacobian_fun(self.cell)
-            dynamics_fun = jax.jacrev(RNN.f, argnums=1)
-            dynamics = dynamics_fun(self.cell, state, input)
-        else:
-            jacobian_func = jax.jacrev(RNN.f, argnums=(0, 1))
-            inmediate_jacobian, dynamics = jacobian_func(self.cell, state, input)
+        h_out = h_out + perturbation
 
         # Project out
         y_out = self.C(h_out) + self.D(input)

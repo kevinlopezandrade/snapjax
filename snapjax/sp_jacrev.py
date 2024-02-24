@@ -16,7 +16,10 @@ from jax.experimental.sparse.bcoo import BCOO
 from jax.extend.linear_util import wrap_init
 from jaxtyping import Array, PyTree
 
-from snapjax.utils import standard_jacobian
+
+def standard_jacobian(jacobian: Array) -> Array:
+    return jacobian.reshape(jacobian.shape[0], -1)
+
 
 _T = TypeVar("_T")
 is_sparse = lambda x: isinstance(x, JAXSparse)
@@ -311,7 +314,9 @@ def apply_sp_pullback(
     )
 
 
-def sp_jacrev(fun: Callable[[_T], PyTree], V: _T, transpose: bool = False) -> _T:
+def sp_jacrev(
+    fun: Callable[[_T], Array], V: _T, transpose: bool = False
+) -> Callable[[_T], Array]:
     """
     Retruns a function that will compute the jacobian of fun w.r.t
     to its first positional argument, making use of the sparsity
