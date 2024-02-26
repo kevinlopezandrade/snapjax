@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Self, Tuple
 
 import equinox as eqx
 import equinox.nn as nn
@@ -76,69 +76,7 @@ class PTACell(RTRLCell):
 
         return h_new
 
-    def make_snap_n_mask(self: RTRLCell, n: int) -> RTRLCell:
+    def make_snap_n_mask(self, n: int) -> Self:
         mask = jtu.tree_map(lambda leaf: snap_n_mask(leaf, n), self)
 
         return mask
-
-
-class PTALayer(RTRLLayer):
-    cell: PTACell
-    C: eqx.nn.Linear
-    D: eqx.nn.Linear
-    d_inp: int = eqx.field(static=True)
-    d_out: int = eqx.field(static=True)
-
-    def __init__(
-        self,
-        hidden_size: int,
-        input_size: int,
-        use_bias: bool = True,
-        *,
-        key: PRNGKeyArray,
-    ):
-        keys = jax.random.split(key, 3)
-        self.cell = PTACell(
-            hidden_size=hidden_size,
-            input_size=input_size,
-            use_bias=use_bias,
-            key=keys[0],
-        )
-        self.C = eqx.nn.Linear(hidden_size, hidden_size, use_bias=False, key=keys[1])
-        self.D = eqx.nn.Linear(input_size, hidden_size, use_bias=False, key=keys[2])
-
-        self.d_inp = input_size
-        self.d_out = hidden_size
-
-    def f(
-        self,
-        state: State,
-        input: Array,
-        perturbation: Array,
-        sp_projection_cell: PTACell = None,
-    ):
-        # Compute Jacobians
-        if sp_projection_cell:
-            f_partial = jtu.Partial(PTACell.f, state=state, input=input)
-            jacobian_func = sp_jacrev(f_partial, sp_projection_cell, transpose=True)
-            inmediate_jacobian = jacobian_func(self.cell)
-            dynamics_fun = jax.jacrev(PTACell.f, argnums=1)
-            dynamics = dynamics_fun(self.cell, state, input)
-        else:
-            jacobian_func = jax.jacrev(PTACell.f, argnums=(0, 1))
-            inmediate_jacobian, dynamics = jacobian_func(self.cell, state, input)
-
-        h_out = self.cell.f(state, input) + perturbation
-
-        # Project out
-        y_out = self.C(h_out) + self.D(input)
-
-        return h_out, (inmediate_jacobian, dynamics), y_out
-
-    def f_bptt(self, state: State, input: Array) -> Tuple[State, Array]:
-        h_out = self.cell.f(state, input)
-
-        # Project out
-        y_out = self.C(h_out) + self.D(input)
-
-        return h_out, y_out

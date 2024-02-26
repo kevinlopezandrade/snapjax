@@ -1,5 +1,3 @@
-from typing import Tuple
-
 import equinox as eqx
 import equinox.nn as nn
 import jax
@@ -7,9 +5,8 @@ import jax.random as jrandom
 import jax.tree_util as jtu
 from jaxtyping import Array, PRNGKeyArray
 
-from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
+from snapjax.cells.base import RTRLCell, State
 from snapjax.cells.utils import snap_n_mask
-from snapjax.sp_jacrev import sp_jacrev
 
 
 class GRU(RTRLCell):
@@ -64,64 +61,3 @@ class GRU(RTRLCell):
         )
 
         return mask
-
-
-class GRULayer(RTRLLayer):
-    cell: GRU
-    C: eqx.nn.Linear
-    D: eqx.nn.Linear
-    d_inp: int = eqx.field(static=True)
-    d_out: int = eqx.field(static=True)
-
-    def __init__(
-        self,
-        hidden_size: int = 10,
-        input_size: int = 10,
-        use_bias: bool = True,
-        *,
-        key: PRNGKeyArray,
-    ):
-        cell_key, c_key, d_key = jax.random.split(key, 3)
-        self.cell = GRU(hidden_size, input_size, key=cell_key)
-        self.C = eqx.nn.Linear(hidden_size, hidden_size, use_bias=False, key=c_key)
-        self.D = eqx.nn.Linear(input_size, hidden_size, use_bias=False, key=d_key)
-
-        self.d_inp = input_size
-        self.d_out = hidden_size
-
-    def f(
-        self,
-        state: State,
-        input: Array,
-        perturbation: Array,
-        sp_projection_cell: GRU = None,
-    ) -> Tuple[State, Jacobians, Array]:
-        """
-        Returns h_(t), y_(t)
-        """
-        h_out = self.cell.f(state, input) + perturbation
-
-        # Compute Jacobian and dynamics
-        if sp_projection_cell:
-            sp_jacobian_fun = sp_jacrev(
-                jtu.Partial(GRU.f, state=state, input=input),
-                sp_projection_cell,
-                transpose=True,
-            )
-            inmediate_jacobian = sp_jacobian_fun(self.cell)
-            dynamics_fun = jax.jacrev(GRU.f, argnums=1)
-            dynamics = dynamics_fun(self.cell, state, input)
-        else:
-            jacobian_func = jax.jacrev(GRU.f, argnums=(0, 1))
-            inmediate_jacobian, dynamics = jacobian_func(self.cell, state, input)
-
-        # Project out
-        y_out = self.C(h_out) + self.D(input)
-
-        return h_out, (inmediate_jacobian, dynamics), y_out
-
-    def f_bptt(self, state: State, input: Array) -> Tuple[State, Array]:
-        h_out = self.cell.f(state, input)
-        y_out = self.C(h_out) + self.D(input)
-
-        return h_out, y_out

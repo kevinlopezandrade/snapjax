@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Any, Generic, List, Sequence, Tuple, TypeVar
+from typing import Any, List, Self, Sequence, Tuple
 
 import equinox as eqx
 import jax
@@ -12,11 +12,10 @@ from snapjax.sp_jacrev import sp_jacrev
 State = Sequence[Array] | Array
 Stacked = Sequence
 
-T = TypeVar("T")
-Jacobians = Tuple[T, Array]
+Jacobians = Tuple["RTRLCell", Array]
 
 
-class RTRLCell(eqx.Module, Generic[T]):
+class RTRLCell(eqx.Module):
     """
     s_(t) = f(s_(t-1), x(t))
     """
@@ -28,8 +27,8 @@ class RTRLCell(eqx.Module, Generic[T]):
     def f(self, state: State, input: Array) -> State: ...
 
     def value_and_jacobian(
-        self, state: State, input: Array, jacobian_projection: T | None = None
-    ) -> Tuple[State, Jacobians[T]]:
+        self, state: State, input: Array, jacobian_projection: Self | None = None
+    ) -> Tuple[State, Jacobians]:
         """
         If jacobian_projection is passed, it provides the sparse projection
         matrix of the jacobian.
@@ -57,7 +56,7 @@ class RTRLCell(eqx.Module, Generic[T]):
         """
         return jnp.zeros(self.hidden_size)
 
-    def make_zero_jacobians(self) -> T:
+    def make_zero_jacobians(self) -> Self:
         """
         Default method, override for different implementations.
         """
@@ -67,7 +66,7 @@ class RTRLCell(eqx.Module, Generic[T]):
         return zero_jacobians
 
     @abstractmethod
-    def make_snap_n_mask(self, n: int) -> T: ...
+    def make_snap_n_mask(self, n: int) -> Self: ...
 
 
 class RTRLLayer(eqx.Module):
@@ -76,7 +75,7 @@ class RTRLLayer(eqx.Module):
     where theta_t = (jacobians, dynamics).
     """
 
-    cell: eqx.AbstractVar[RTRLCell[T]]
+    cell: eqx.AbstractVar[RTRLCell]
     d_inp: eqx.AbstractVar[int]
     d_out: eqx.AbstractVar[int]
 
@@ -86,8 +85,8 @@ class RTRLLayer(eqx.Module):
         state: State,
         input: Array,
         perturbation: Array,
-        sp_projection_cell: RTRLCell[T] | None = None,
-    ) -> Tuple[State, Jacobians[RTRLCell[T]], Array]:
+        sp_projection_cell: RTRLCell | None = None,
+    ) -> Tuple[State, Jacobians, Array]:
         """
         If sp_projection_cell is not None, then the sparse jacobians must be
         returned as transposed jacobians for efficieny in the algorithm.
@@ -115,15 +114,15 @@ class RTRLStacked(eqx.Module):
         state: Stacked[State],
         input: Array,
         perturbations: Stacked[Array],
-        sp_projection_tree: "RTRLStacked" = None,
-    ) -> Tuple[Stacked[State], Stacked[Jacobians[RTRLCell[Any]]], Array]: ...
+        sp_projection_tree: Self | None = None,
+    ) -> Tuple[Stacked[State], Stacked[Jacobians], Array]: ...
 
     def f_bptt(
         self, state: Stacked[State], input: Array
     ) -> Tuple[Stacked[State], Array]:
         raise NotImplementedError("BPTT mode has not been implemented for this Network")
 
-    def get_snap_n_mask(self, n: int) -> "RTRLStacked":
+    def get_snap_n_mask(self, n: int) -> Self:
         """
         Gets the maks for performing snap-n, where n >= 1.
         """

@@ -8,8 +8,9 @@ from jax.experimental.sparse import BCOO
 from jaxtyping import Array
 
 from snapjax.cells.base import RTRLStacked, is_rtrl_cell
-from snapjax.cells.continous_rnn import LinearTanhReadout, SparseFiringRateRNN
+from snapjax.cells.continous_rnn import SparseFiringRateRNN
 from snapjax.cells.initializers import glorot_weights, normal_channels
+from snapjax.cells.readout import LinearTanhReadout
 from snapjax.cells.rnn import RNN, RNNLayer
 from snapjax.cells.stacked import StackedCell
 from snapjax.sp_jacrev import DenseProjection, Mask, SparseMask, SparseProjection

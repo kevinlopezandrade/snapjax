@@ -298,7 +298,9 @@ def apply_sp_pullback(
         sp: Projection matrix to vmap over.
     """
     if isinstance(sp, DenseProjection):
-        return jax.vmap(lambda ct: pullback(ct)[0])(sp.projection_matrix)
+        return standard_jacobian(
+            jax.vmap(lambda ct: pullback(ct)[0])(sp.projection_matrix)
+        )
 
     # NOTE: When you evaluate pullback to a cotangent vector even if the
     # jacobian jax gives if you use jax.jacobian is of 3 or more dimensions

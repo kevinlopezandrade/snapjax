@@ -1,19 +1,18 @@
-from typing import Any, Generic, Tuple, TypeVar
+from typing import Self
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
 from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray
 
-from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
+from snapjax.cells.base import RTRLCell, State
 from snapjax.cells.utils import snap_n_mask, snap_n_mask_bcoo
-from snapjax.sp_jacrev import Mask, sp_jacrev
+from snapjax.sp_jacrev import Mask
 
 
-class FiringRateRNN(RTRLCell["FiringRateRNN"]):
+class FiringRateRNN(RTRLCell):
     W: Array  # mxm
     U: Array  # mxd
     dt: float = eqx.field(static=True)
@@ -54,7 +53,7 @@ def mask_matrix(W: Array, mask: Array) -> BCOO:
     return mat
 
 
-class SparseFiringRateRNN(RTRLCell["SparseFiringRateRNN"]):
+class SparseFiringRateRNN(RTRLCell):
     W: BCOO
     U: Array
     dt: float = eqx.field(static=True)
@@ -87,7 +86,7 @@ class SparseFiringRateRNN(RTRLCell["SparseFiringRateRNN"]):
 
         return h_new
 
-    def make_zero_jacobians(self) -> "SparseFiringRateRNN":
+    def make_zero_jacobians(self) -> Self:
         def _get_zero_jacobian(leaf: Array | BCOO):
             """
             The jacobians are still dense arrays.
@@ -104,7 +103,7 @@ class SparseFiringRateRNN(RTRLCell["SparseFiringRateRNN"]):
         )
         return zero_jacobians
 
-    def make_snap_n_mask(self, n: int) -> "SparseFiringRateRNN":
+    def make_snap_n_mask(self, n: int) -> Self:
         """
         Only mask the weights that are sparse.
         """
@@ -122,41 +121,3 @@ class SparseFiringRateRNN(RTRLCell["SparseFiringRateRNN"]):
         )
 
         return mask
-
-
-G = TypeVar("G")
-
-
-class LinearTanhReadout(RTRLLayer):
-    cell: RTRLCell[G]
-    C: Array
-    d_inp: int = eqx.field(static=True)
-    d_out: int = eqx.field(static=True)
-
-    def __init__(self, c: Array, cell: RTRLCell[G]) -> None:
-        self.C = c
-        self.cell = cell
-
-        self.d_inp = self.cell.input_size
-        self.d_out = c.shape[0]
-
-    def f(
-        self,
-        state: State,
-        input: Array,
-        perturbation: Array,
-        sp_projection_cell: RTRLCell[G] | None = None,
-    ) -> Tuple[State, Jacobians[RTRLCell[G]], Array]:
-        h_out, jacobians = self.cell.value_and_jacobian(
-            state, input, sp_projection_cell
-        )
-        h_out = h_out + perturbation
-        y_out = self.C @ jnp.tanh(h_out)
-
-        return h_out, jacobians, y_out
-
-    def f_bptt(self, state: State, input: Array) -> Tuple[State, Array]:
-        h_out = self.cell.f(state, input)
-        y_out = self.C @ jnp.tanh(h_out)
-
-        return h_out, y_out

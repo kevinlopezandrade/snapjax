@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Self, Tuple
 
 import equinox as eqx
 from jaxtyping import Array
@@ -23,7 +23,7 @@ class StackedCell(RTRLStacked):
         state: Stacked[State],
         input: Array,
         perturbations: Array,
-        jacobian_projection: "StackedCell" = None,
+        jacobian_projection: Self = None,
     ):
         def _get_projection_cell(index: int):
             if jacobian_projection:

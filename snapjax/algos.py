@@ -11,9 +11,14 @@ from jaxtyping import Array, Scalar
 
 from snapjax.cells.base import RTRLCell, RTRLLayer, RTRLStacked, State, is_rtrl_cell
 from snapjax.losses import l2
-from snapjax.sp_jacrev import DenseProjection, Mask, SparseMask, SparseProjection
+from snapjax.sp_jacrev import (
+    DenseProjection,
+    Mask,
+    SparseMask,
+    SparseProjection,
+    standard_jacobian,
+)
 from snapjax.spp_primitives.primitives import spp_csr_matmul
-from snapjax.sp_jacrev import standard_jacobian
 
 config.update("jax_numpy_rank_promotion", "raise")
 
@@ -22,7 +27,7 @@ def make_zeros_jacobians_sp(jacobian_projection: RTRLStacked):
     # Jacobians are saved as the tranpose jacobians.
     def _sparse_jacobian(leaf: SparseProjection | DenseProjection):
         if isinstance(leaf, DenseProjection):
-            return jnp.zeros(leaf.shape)
+            return standard_jacobian(jnp.zeros(leaf.shape))
 
         zeros = jnp.zeros(leaf.sparse_def.nse)
         indices = leaf.sparse_def.indices_csc[:, ::-1]  # For the transpose.

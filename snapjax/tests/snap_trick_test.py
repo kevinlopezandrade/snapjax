@@ -1,7 +1,6 @@
 import time
 
 import equinox as eqx
-import jax.numpy as jnp
 import jax.random as jrandom
 from jax import config
 from jax.lax import stop_gradient
@@ -9,8 +8,8 @@ from jax.random import PRNGKey
 from jaxtyping import Array
 
 from snapjax.cells.base import RTRLCell, State
-from snapjax.cells.continous_rnn import LinearTanhReadout
 from snapjax.cells.initializers import glorot_weights, normal_channels
+from snapjax.cells.readout import LinearTanhReadout
 from snapjax.cells.stacked import StackedCell
 from snapjax.cells.utils import snap_n_mask
 from snapjax.losses import masked_quadratic
@@ -33,7 +32,7 @@ def diag_matrix(W: Array):
     return jnp.diag(jnp.diag(W))
 
 
-class RNNDiag(RTRLCell["RNNDiag"]):
+class RNNDiag(RTRLCell):
     W: Array
     diag: Array
     U: Array
@@ -59,7 +58,7 @@ class RNNDiag(RTRLCell["RNNDiag"]):
         return mask
 
 
-class RNN(RTRLCell["RNN"]):
+class RNN(RTRLCell):
     W: Array
     U: Array
     input_size: int = eqx.field(static=True)
@@ -78,7 +77,7 @@ class RNN(RTRLCell["RNN"]):
         h = h_a + h_u
         return h
 
-    def make_snap_n_mask(self: "RNN", n: int) -> "RNN":
+    def make_snap_n_mask(self, n: int):
         mask = jtu.tree_map(lambda leaf: snap_n_mask(leaf, n), self)
         return mask
 

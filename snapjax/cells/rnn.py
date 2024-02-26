@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Self, Tuple
 
 import equinox as eqx
 import jax
@@ -11,7 +11,7 @@ from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
 from snapjax.cells.utils import snap_n_mask, snap_n_mask_bcoo
 
 
-class RNN(RTRLCell["RNN"]):
+class RNN(RTRLCell):
     weights_hh: eqx.nn.Linear
     weights_ih: eqx.nn.Linear
     input_size: int = eqx.field(static=True)
@@ -47,7 +47,7 @@ class RNN(RTRLCell["RNN"]):
 
         return h_new
 
-    def make_snap_n_mask(self, n: int) -> "RNN":
+    def make_snap_n_mask(self, n: int) -> Self:
         """
         Mask every weight.
         """
@@ -94,7 +94,7 @@ class RNNLayer(RTRLLayer):
         input: Array,
         perturbation: Array,
         sp_projection_cell: RNN | None = None,
-    ) -> Tuple[State, Jacobians[RNN], Array]:
+    ) -> Tuple[State, Jacobians, Array]:
         """
         Returns h_(t), y_(t)
         """

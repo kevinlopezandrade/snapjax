@@ -77,4 +77,5 @@ def gen_exp_sum(key: PRNGKeyArray, N: int, m: int, dt: float, T: float):
         keys = jrandom.split(key, N)
         for key in keys:
             inp, out = _convolution_with_white_noise(key, dt=dt, signal=p_discrete)
+            inp = inp.reshape(inp.shape[0], 1)
             yield inp, out, mask

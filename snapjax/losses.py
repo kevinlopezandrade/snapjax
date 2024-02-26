@@ -16,3 +16,7 @@ def cross_entropy(y: Array, y_hat: Array, mask: float):
 def masked_quadratic(y: Array, y_hat: Array, mask: float):
     loss = mask * jnp.mean(0.5 * (y - y_hat) ** 2)
     return loss
+
+
+def masked_l2(y: Array, y_hat: Array, mask: float):
+    return mask * jnp.sum((y - y_hat) ** 2)
