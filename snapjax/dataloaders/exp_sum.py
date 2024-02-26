@@ -47,7 +47,9 @@ def _convolution_with_white_noise(
     return x_discrete, y
 
 
-def gen_exp_sum(key: PRNGKeyArray, N: int, m: int, dt: float, T: float):
+def gen_exp_sum(
+    key: PRNGKeyArray, N: int, m: int, dt: float, T: float, mask_target: bool
+):
     with jax.default_device(jax.devices("cpu")[0]):
         key, c_key, b_key, matrix_key = jrandom.split(key, 4)
 
@@ -71,24 +73,38 @@ def gen_exp_sum(key: PRNGKeyArray, N: int, m: int, dt: float, T: float):
         p_discrete = jax.vmap(p)(times)
 
         # Mask
-        mask = jnp.ones(len(times))
-        mask = mask.at[-1].set(1.0)
+        if mask_target:
+            mask = jnp.zeros(len(times))
+            mask = mask.at[-1].set(1.0)
+        else:
+            mask = jnp.ones(len(times))
 
         keys = jrandom.split(key, N)
         for key in keys:
             inp, out = _convolution_with_white_noise(key, dt=dt, signal=p_discrete)
             inp = inp.reshape(inp.shape[0], 1)
+            out = out.reshape(out.shape[0], 1)
             yield inp, out, mask
 
 
-def gen_batch_exp_sum(key: PRNGKeyArray, N: int, bs: int, m: int, dt: float, T: float):
+def gen_batch_exp_sum(
+    key: PRNGKeyArray,
+    N: int,
+    bs: int,
+    m: int,
+    dt: float,
+    T: float,
+    mask_target: bool = True,
+):
     TOTAL = N * bs
 
     batch_inp = []
     batch_out = []
     batch_mask = []
 
-    for i, (inp, out, mask) in enumerate(gen_exp_sum(key, TOTAL, m=m, dt=dt, T=T), 1):
+    for i, (inp, out, mask) in enumerate(
+        gen_exp_sum(key, TOTAL, m=m, dt=dt, T=T, mask_target=mask_target), 1
+    ):
         batch_inp.append(inp)
         batch_out.append(out)
         batch_mask.append(mask)
