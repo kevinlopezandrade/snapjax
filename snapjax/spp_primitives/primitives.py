@@ -2,14 +2,13 @@ import ctypes
 from ctypes import pythonapi
 from functools import partial
 
-import jax
 import jax.numpy as jnp
-from jaxtyping import Array
 import numpy as np
 from jax import core
 from jax.interpreters import batching, mlir, xla
 from jax.interpreters.mlir import ir
 from jax.lib import xla_client
+from jaxtyping import Array
 from numba import carray, cfunc, types
 from numpy.typing import NDArray
 
@@ -309,13 +308,23 @@ def spp_csr_matmul_batch(args, batch_axes):
         data_batched = jnp.stack(data_batched)
         return data_batched, 0
     if data.ndim == 2:
-        # Then I'm batching over data and RHS.
-        data_batched = [
-            spp_csr_matmul(data[i], cols, indptr, RHS[i], sp)
-            for i in range(data.shape[0])
-        ]
-        data_batched = jnp.stack(data_batched)
-        return data_batched, 0
+        # Then I'm batching over data.
+        if RHS.ndim == 3:
+            # Then I'm also batching over RHS.
+            data_batched = [
+                spp_csr_matmul(data[i], cols, indptr, RHS[i], sp)
+                for i in range(data.shape[0])
+            ]
+            data_batched = jnp.stack(data_batched)
+            return data_batched, 0
+        if RHS.ndim == 2:
+            # I only bach over data.
+            data_batched = [
+                spp_csr_matmul(data[i], cols, indptr, RHS, sp)
+                for i in range(data.shape[0])
+            ]
+            data_batched = jnp.stack(data_batched)
+            return data_batched, 0
 
 
 batching.primitive_batchers[spp_csr_matmul_p] = spp_csr_matmul_batch
