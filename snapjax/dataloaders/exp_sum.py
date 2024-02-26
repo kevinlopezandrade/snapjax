@@ -79,3 +79,21 @@ def gen_exp_sum(key: PRNGKeyArray, N: int, m: int, dt: float, T: float):
             inp, out = _convolution_with_white_noise(key, dt=dt, signal=p_discrete)
             inp = inp.reshape(inp.shape[0], 1)
             yield inp, out, mask
+
+
+def gen_batch_exp_sum(key: PRNGKeyArray, N: int, bs: int, m: int, dt: float, T: float):
+    TOTAL = N * bs
+
+    batch_inp = []
+    batch_out = []
+    batch_mask = []
+
+    for i, (inp, out, mask) in enumerate(gen_exp_sum(key, TOTAL, m=m, dt=dt, T=T), 1):
+        batch_inp.append(inp)
+        batch_out.append(out)
+        batch_mask.append(mask)
+        if i % bs == 0:
+            yield jnp.array(batch_inp), jnp.array(batch_out), jnp.array(batch_mask)
+            batch_inp = []
+            batch_out = []
+            batch_mask = []

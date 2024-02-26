@@ -2,6 +2,7 @@
 Code is from https://github.com/frschu/neurips_2020_interplay_randomness_structure/
 adapted to our needs.
 """
+
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -190,11 +191,29 @@ def flip_flop_sequence(
     return input_samp, target_samp, mask_samp
 
 
-def gen_flipflop(N: int, key: PRNGKeyArray, **params):
+def gen_flipflop(key: PRNGKeyArray, N: int, **params):
     with jax.default_device(jax.devices("cpu")[0]):
         keys = jrandom.split(key, N)
         for i in range(N):
             yield flip_flop_sequence(key=keys[i], **params)
+
+
+def gen_batch_flipflop(key: PRNGKeyArray, N: int, bs: int, **params):
+    TOTAL = N * bs
+
+    batch_inp = []
+    batch_out = []
+    batch_mask = []
+
+    for i, (inp, out, mask) in enumerate(gen_flipflop(key, TOTAL, **params), 1):
+        batch_inp.append(inp)
+        batch_out.append(out)
+        batch_mask.append(mask)
+        if i % bs == 0:
+            yield jnp.array(batch_inp), jnp.array(batch_out), jnp.array(batch_mask)
+            batch_inp = []
+            batch_out = []
+            batch_mask = []
 
 
 ########################################################################################
