@@ -336,6 +336,7 @@ def rtrl(
     jacobian_projection: RTRLStacked | None = None,
     loss_func: Callable[[Array, Array, float], Scalar] = l2,
     use_scan: bool = True,
+    sparse_model: bool = False,  # Ignored to keep consistency with BPTT API.
 ):
     if mask is not None:
         n_non_masked = mask.sum()

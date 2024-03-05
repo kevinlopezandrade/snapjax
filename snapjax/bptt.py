@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, cast
 
 import jax
 import jax.experimental.sparse as jsparse
@@ -40,6 +40,8 @@ def bptt(
     inputs: Array,
     targets: Array,
     mask: Array | None = None,
+    jacobian_mask: RTRLStacked | None = None,  # Ignored for consistency with API RTRL.
+    jacobian_projection: RTRLStacked | None = None,  # Ignored
     loss_func: Callable[[Array, Array, float], Scalar] = l2,
     use_scan: bool = True,
     sparse_model: bool = False,
@@ -73,4 +75,7 @@ def bptt(
             is_leaf=lambda node: isinstance(node, BCOO),
         )
 
+    acc_loss = cast(float, acc_loss)
+    acc_grads = cast(RTRLStacked, acc_grads)
+    preds = cast(Array, preds)
     return acc_loss, acc_grads, preds

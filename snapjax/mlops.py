@@ -1,5 +1,13 @@
 import subprocess
+from enum import Enum
 from typing import List
+
+from snapjax.cells.base import RTRLStacked
+
+
+class Algorithm(Enum):
+    RTRL = 1
+    BPTT = 2
 
 
 # NOTE: This was written by ChatGPT.
@@ -89,3 +97,15 @@ def ensure_static_codebase(
             raise e
         else:
             print(f"Unexpected error: {e}")
+
+
+def get_algorithm(algorithm: Algorithm):
+    if algorithm == Algorithm.BPTT:
+        from snapjax.bptt import bptt
+
+        return bptt
+
+    if algorithm == Algorithm.RTRL:
+        from snapjax.algos import rtrl
+
+        return rtrl
