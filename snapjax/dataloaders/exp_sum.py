@@ -87,6 +87,46 @@ def gen_exp_sum(
             yield inp, out, mask
 
 
+def gen_exp_sum_diag(
+    key: PRNGKeyArray, N: int, m: int, dt: float, T: float, mask_target: bool
+):
+    with jax.default_device(jax.devices("cpu")[0]):
+        key, c_key, b_key, matrix_key = jrandom.split(key, 4)
+
+        # Kernel params
+        c = jrandom.normal(c_key, shape=(m,))
+        b = jrandom.normal(b_key, shape=(m,))
+
+        variance = 1 / m
+        Z = jrandom.normal(matrix_key, shape=(m,))
+        Z = jnp.abs(jnp.sqrt(variance) * Z) + 1e-4
+        W = jnp.diag(Z)
+
+        # Time steps
+        times = jnp.arange(0, T + dt, step=dt)
+
+        # Kernel
+        @jax.jit
+        def p(t):
+            return c.T @ jax.scipy.linalg.expm(W * t) @ b
+
+        p_discrete = jax.vmap(p)(times)
+
+        # Mask
+        if mask_target:
+            mask = jnp.zeros(len(times))
+            mask = mask.at[-1].set(1.0)
+        else:
+            mask = jnp.ones(len(times))
+
+        keys = jrandom.split(key, N)
+        for key in keys:
+            inp, out = _convolution_with_white_noise(key, dt=dt, signal=p_discrete)
+            inp = inp.reshape(inp.shape[0], 1)
+            out = out.reshape(out.shape[0], 1)
+            yield inp, out, mask
+
+
 def gen_batch_exp_sum(
     key: PRNGKeyArray,
     N: int,
@@ -104,6 +144,35 @@ def gen_batch_exp_sum(
 
     for i, (inp, out, mask) in enumerate(
         gen_exp_sum(key, TOTAL, m=m, dt=dt, T=T, mask_target=mask_target), 1
+    ):
+        batch_inp.append(inp)
+        batch_out.append(out)
+        batch_mask.append(mask)
+        if i % bs == 0:
+            yield jnp.array(batch_inp), jnp.array(batch_out), jnp.array(batch_mask)
+            batch_inp = []
+            batch_out = []
+            batch_mask = []
+
+
+def gen_batch_exp_sum_diag(
+    key: PRNGKeyArray,
+    N: int,
+    bs: int,
+    m: int,
+    dt: float,
+    T: float,
+    mask_target: bool = True,
+):
+    TOTAL = N * bs
+
+    batch_inp = []
+    batch_out = []
+    batch_mask = []
+
+    for i, (inp, out, mask) in enumerate(
+        gen_exp_sum_diag(key, TOTAL, m=m, dt=dt, T=T, mask_target=mask_target),
+        1,
     ):
         batch_inp.append(inp)
         batch_out.append(out)

@@ -67,12 +67,14 @@ class LinearTanhReadout(RTRLLayer):
         )
         h_out = h_out + perturbation
         y_out = self.C @ jnp.tanh(h_out)
+        y_out = y_out / jnp.sqrt((self.cell.hidden_size))
 
         return h_out, jacobians, y_out
 
     def f_bptt(self, state: State, input: Array) -> Tuple[State, Array]:
         h_out = self.cell.f(state, input)
         y_out = self.C @ jnp.tanh(h_out)
+        y_out = y_out / jnp.sqrt((self.cell.hidden_size))
 
         return h_out, y_out
 
