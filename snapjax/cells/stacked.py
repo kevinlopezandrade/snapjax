@@ -22,8 +22,8 @@ class StackedCell(RTRLStacked):
         self,
         state: Stacked[State],
         input: Array,
-        perturbations: Array,
-        jacobian_projection: Self = None,
+        perturbations: Stacked[Array],
+        jacobian_projection: Self | None = None,
     ):
         def _get_projection_cell(index: int):
             if jacobian_projection:

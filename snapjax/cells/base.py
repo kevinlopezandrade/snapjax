@@ -114,7 +114,7 @@ class RTRLStacked(eqx.Module):
         state: Stacked[State],
         input: Array,
         perturbations: Stacked[Array],
-        sp_projection_tree: Self | None = None,
+        jacobian_projection: Self | None = None,
     ) -> Tuple[Stacked[State], Stacked[Jacobians], Array]: ...
 
     def f_bptt(

@@ -2,12 +2,13 @@ import subprocess
 from enum import Enum
 from typing import List
 
-from snapjax.cells.base import RTRLStacked
-
 
 class Algorithm(Enum):
     RTRL = 1
     BPTT = 2
+
+    def __str__(self) -> str:
+        return self.name
 
 
 # NOTE: This was written by ChatGPT.

@@ -9,7 +9,14 @@ from jax import config
 from jax.experimental.sparse import BCOO, BCSR
 from jaxtyping import Array, Scalar
 
-from snapjax.cells.base import RTRLCell, RTRLLayer, RTRLStacked, State, is_rtrl_cell
+from snapjax.cells.base import (
+    RTRLCell,
+    RTRLLayer,
+    RTRLStacked,
+    Stacked,
+    State,
+    is_rtrl_cell,
+)
 from snapjax.losses import l2
 from snapjax.sp_jacrev import (
     DenseProjection,
@@ -23,6 +30,7 @@ from snapjax.spp_primitives.primitives import spp_csr_matmul
 config.update("jax_numpy_rank_promotion", "raise")
 
 
+@jax.jit
 def make_zeros_jacobians_sp(jacobian_projection: RTRLStacked):
     # Jacobians are saved as the tranpose jacobians.
     def _sparse_jacobian(leaf: SparseProjection | DenseProjection):
@@ -266,7 +274,7 @@ def step_loss(
 def forward_rtrl(
     model: RTRLStacked,
     jacobians_prev: RTRLStacked,
-    h_prev: Sequence[State],
+    h_prev: Stacked[State],
     input: Array,
     target: Array,
     mask: float = 1.0,
@@ -314,10 +322,17 @@ def forward_rtrl(
         is_leaf=lambda node: isinstance(node, BCOO),
     )
 
+    h_t = cast(Stacked[State], h_t)
+    grads = cast(RTRLStacked, grads)
+    jacobians = cast(RTRLStacked, jacobians)
+    loss_t = cast(float, loss_t)
+    y_hat = cast(Array, y_hat)
+
     return h_t, grads, jacobians, loss_t, y_hat
 
 
-def make_init_state(model: RTRLStacked):
+@jax.jit
+def make_init_state(model: RTRLStacked) -> Stacked[State]:
     states: Sequence[State] = []
     for layer in model.layers:
         if isinstance(layer, RTRLLayer):

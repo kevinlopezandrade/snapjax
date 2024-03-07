@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any
+from typing import Any, Tuple
 
 import jax
 import jax.tree_util as jtu
@@ -38,7 +38,9 @@ def sparse_aware_update(model: RTRLStacked, updates: RTRLStacked):
 
 
 @partial(jax.jit, static_argnames=["optimizer"])
-def apply_update(model: RTRLStacked, grads: RTRLStacked, state: Any, optimizer: Any):
+def apply_update(
+    model: RTRLStacked, grads: RTRLStacked, state: Any, optimizer: Any
+) -> Tuple[RTRLStacked, Any]:
     updates, state = optimizer.update(grads, state)
     model = sparse_aware_update(model, updates)
     return model, state
