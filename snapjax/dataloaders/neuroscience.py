@@ -198,24 +198,6 @@ def gen_flipflop(key: PRNGKeyArray, N: int, **params):
             yield flip_flop_sequence(key=keys[i], **params)
 
 
-def gen_batch_flipflop(key: PRNGKeyArray, N: int, bs: int, **params):
-    TOTAL = N * bs
-
-    batch_inp = []
-    batch_out = []
-    batch_mask = []
-
-    for i, (inp, out, mask) in enumerate(gen_flipflop(key, TOTAL, **params), 1):
-        batch_inp.append(inp)
-        batch_out.append(out)
-        batch_mask.append(mask)
-        if i % bs == 0:
-            yield jnp.array(batch_inp), jnp.array(batch_out), jnp.array(batch_mask)
-            batch_inp = []
-            batch_out = []
-            batch_mask = []
-
-
 ########################################################################################
 def mante(
     dims,
