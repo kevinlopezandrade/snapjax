@@ -107,6 +107,7 @@ class RTRLStacked(eqx.Module):
 
     layers: eqx.AbstractVar[List[Layer]]
     num_layers: eqx.AbstractVar[int]
+    sparse: eqx.AbstractVar[bool]
 
     @abstractmethod
     def f(
@@ -146,6 +147,11 @@ class RTRLStacked(eqx.Module):
         )
 
         return jacobian_mask
+
+    # Use __ and __ so that equinox does not wrap this method and I
+    # can directly pass this to the jax.lax.scan.
+    def __forward__(self, state: Stacked[State], input: Array):
+        return self.f_bptt(state, input)
 
 
 def is_rtrl_cell(node: Any):

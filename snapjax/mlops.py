@@ -1,4 +1,6 @@
+import os
 import subprocess
+from datetime import datetime
 from enum import Enum
 from typing import List
 
@@ -100,6 +102,39 @@ def ensure_static_codebase(
             print(f"Unexpected error: {e}")
 
 
+def set_cuda():
+    try:
+        # Query GPU details, including process information, in JSON format
+        result = subprocess.run(
+            ["nvidia-smi", "-q", "-x"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError("Failed to execute nvidia-smi") from e
+
+    # Use XML parsing to find a GPU without attached processes
+    try:
+        import xml.etree.ElementTree as ET
+
+        root = ET.fromstring(result.stdout)
+        for gpu in root.findall("gpu"):
+            processes = gpu.find("processes")
+            if not processes.findall("process_info"):
+                # This GPU has no processes attached, consider it free
+                gpu_id = gpu.find("minor_number").text
+                os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
+                print(f"Set CUDA_VISIBLE_DEVICES to GPU {gpu_id}.")
+                return
+    except Exception as e:
+        raise RuntimeError("Error parsing nvidia-smi output") from e
+
+    # If we reach this point, no free GPU was found
+    raise RuntimeError("No available CUDA GPUs found.")
+
+
 def get_algorithm(algorithm: Algorithm):
     if algorithm == Algorithm.BPTT:
         from snapjax.bptt import bptt
@@ -110,3 +145,23 @@ def get_algorithm(algorithm: Algorithm):
         from snapjax.algos import rtrl
 
         return rtrl
+
+
+def create_date_folder(should_raise: bool = False):
+    # Get the current date in YYYY-MM-DD format
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    # Construct the folder name with the current path
+    folder_path = os.path.join(os.getcwd(), today_str)
+
+    # Check if the folder already exists
+    if os.path.exists(folder_path):
+        if should_raise:
+            raise FileExistsError(f"Folder '{today_str}' already exists.")
+        else:
+            print(f"Folder '{today_str}' already exists.")
+            return folder_path
+    else:
+        # Create the folder
+        os.mkdir(folder_path)
+        print(f"Folder '{today_str}' created successfully.")
+        return folder_path

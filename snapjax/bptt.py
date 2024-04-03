@@ -39,17 +39,16 @@ def bptt(
     model: RTRLStacked,
     inputs: Array,
     targets: Array,
-    mask: Array | None = None,
+    mask: Array,
     jacobian_mask: RTRLStacked | None = None,  # Ignored for consistency with API RTRL.
     jacobian_projection: RTRLStacked | None = None,  # Ignored
     loss_func: Callable[[Array, Array, float], Scalar] = l2,
     use_scan: bool = True,
-    sparse_model: bool = False,
+    mean: bool = False,
 ):
-    if mask is not None:
+    if mean:
         factor = mask.sum()
     else:
-        mask = jnp.ones(targets.shape[0])
         factor = 1
 
     def _loss(model: RTRLStacked, inputs: Array, targets: Array):
@@ -57,7 +56,7 @@ def bptt(
         losses = (1 / factor) * jnp.sum(jax.vmap(loss_func)(targets, preds, mask))
         return losses, preds
 
-    if not sparse_model:
+    if not model.sparse:
         (acc_loss, preds), acc_grads = jax.value_and_grad(_loss, has_aux=True)(
             model, inputs, targets
         )

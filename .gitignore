@@ -162,3 +162,9 @@ cython_debug/
 wandb/
 outputs/
 outputs_distributed/
+notebooks/
+
+*.eqx
+*.npy
+
+runs/

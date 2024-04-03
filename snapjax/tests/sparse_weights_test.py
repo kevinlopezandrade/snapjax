@@ -57,7 +57,6 @@ def test_rtrl_bptt_sparse_weights():
         mask,
         use_scan=False,
         loss_func=masked_quadratic,
-        sparse_model=True,
     )
 
     assert jnp.allclose(loss, loss_bptt)

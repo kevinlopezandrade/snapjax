@@ -346,20 +346,17 @@ def rtrl(
     model: RTRLStacked,
     inputs: Array,
     targets: Array,
-    mask: Array | None = None,
+    mask: Array,
     jacobian_mask: RTRLStacked | None = None,
     jacobian_projection: RTRLStacked | None = None,
     loss_func: Callable[[Array, Array, float], Scalar] = l2,
     use_scan: bool = True,
-    sparse_model: bool = False,  # Ignored to keep consistency with BPTT API.
+    mean: bool = False,
 ):
-    if mask is not None:
-        n_non_masked = mask.sum()
-        _loss_func = lambda y, y_hat, mask: (1 / n_non_masked) * loss_func(
-            y, y_hat, mask
-        )
+    if mean:
+        factor = mask.sum()
+        _loss_func = lambda y, y_hat, mask: (1 / factor) * loss_func(y, y_hat, mask)
     else:
-        mask = jnp.ones(targets.shape[0])
         _loss_func = loss_func
 
     def forward_repack(carry, data):

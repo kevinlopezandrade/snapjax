@@ -177,9 +177,13 @@ def flip_flop_sequence(
         sign = jrandom.choice(sign_key, signs).item()
 
         # Input
-        input_samp[idx_t : idx_t + stimulus_duration_discrete, channel] = sign
+        input_samp[idx_t : idx_t + stimulus_duration_discrete, channel] = (
+            sign * input_amp
+        )
         # Target
-        target_samp[idx_t + decision_delay_duration_discrete : idx_tp1, channel] = sign
+        target_samp[idx_t + decision_delay_duration_discrete : idx_tp1, channel] = (
+            sign * target_amp
+        )
         # Mask
         mask_samp[idx_t + decision_delay_duration_discrete : idx_tp1] = 1
         # Update
@@ -191,11 +195,21 @@ def flip_flop_sequence(
     return input_samp, target_samp, mask_samp
 
 
-def gen_flipflop(key: PRNGKeyArray, N: int, **params):
-    with jax.default_device(jax.devices("cpu")[0]):
-        keys = jrandom.split(key, N)
-        for i in range(N):
-            yield flip_flop_sequence(key=keys[i], **params)
+def gen_flipflop(key: PRNGKeyArray, **params):
+    def _generator(N: int):
+        with jax.default_device(jax.devices("cpu")[0]):
+            keys = jrandom.split(key, N)
+            for i in range(N):
+                yield flip_flop_sequence(key=keys[i], **params)
+
+    inp_dim = 2
+    out_dim = 2
+
+    _params = params.copy()
+    _params["inp_dim"] = inp_dim
+    _params["out_dim"] = out_dim
+
+    return _params, _generator
 
 
 ########################################################################################

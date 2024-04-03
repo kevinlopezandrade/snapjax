@@ -6,16 +6,14 @@ from jaxtyping import Array, PRNGKeyArray
 
 def bgen(generator: Generator[Tuple[Array, Array, Array], Any, None]):
 
-    def _batched_version(
-        key: PRNGKeyArray, *, N: int | None = None, bs: int | None = None, **params
-    ):
+    def _batched_version(N: int | None = None, bs: int | None = None, **params):
         TOTAL = N * bs
 
         b_inp = []
         b_out = []
         b_mask = []
 
-        for i, (inp, out, mask) in enumerate(generator(key, N=TOTAL, **params), 1):
+        for i, (inp, out, mask) in enumerate(generator(N=TOTAL, **params), 1):
             b_inp.append(inp)
             b_out.append(out)
             b_mask.append(mask)

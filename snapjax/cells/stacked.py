@@ -13,10 +13,12 @@ class StackedCell(RTRLStacked):
 
     layers: List[Layer]
     num_layers: int = eqx.field(static=True)
+    sparse: bool = eqx.field(static=True)
 
-    def __init__(self, layers: List[Layer]):
+    def __init__(self, layers: List[Layer], sparse: bool = False):
         self.layers = layers
         self.num_layers = len(layers)
+        self.sparse = sparse
 
     def f(
         self,
@@ -69,3 +71,51 @@ class StackedCell(RTRLStacked):
                 out = layer(out)
 
         return tuple(new_state), out
+
+
+class SingleCell(RTRLStacked):
+    layers: List[Layer]  # To fullfill the general api.
+    num_layers: int = eqx.field(static=True)
+    sparse: bool = eqx.field(static=True)
+
+    def __init__(self, layer: RTRLLayer, sparse: bool = False):
+        self.layers = [layer]
+        self.num_layers = 1
+        self.sparse = sparse
+
+    @property
+    def layer(self):
+        return self.layers[0]
+
+    def f(
+        self,
+        state: Stacked[State],
+        input: Array,
+        perturbations: Stacked[Array],
+        jacobian_projection: Self | None = None,
+    ):
+        def _get_projection_cell():
+            if jacobian_projection:
+                layers = jacobian_projection.layers
+                assert isinstance(layers[0], RTRLLayer)
+                return layers[0].cell
+            else:
+                return None
+
+        assert isinstance(self.layers[0], RTRLLayer)
+
+        new_state, jacobians, out = self.layers[0].f(
+            state[0], input, perturbations[0], _get_projection_cell()
+        )
+
+        return tuple([new_state]), tuple([jacobians]), out
+
+    def f_bptt(
+        self, state: Stacked[State], input: Array
+    ) -> Tuple[Stacked[State], Array]:
+
+        assert isinstance(self.layers[0], RTRLLayer)
+
+        new_state, out = self.layers[0].f_bptt(state[0], input)
+
+        return tuple([new_state]), out

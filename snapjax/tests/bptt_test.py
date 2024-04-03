@@ -240,7 +240,7 @@ def test_bptt_snap_diagonal_sparse():
     and the recurrent matrices are parametrized as diagonal.
     """
     T = 100
-    model = get_stacked_rnn(1, 20, 20)
+    model = get_stacked_rnn(1, 20, 20, sparse=True)
     model = replace_rnn_with_diagonals(model, sparse_weights=True)
     jacobian_mask = model.get_snap_n_mask(10)
     jacobian_projection = make_jacobian_projection(jacobian_mask)
@@ -266,7 +266,6 @@ def test_bptt_snap_diagonal_sparse():
         mask,
         use_scan=False,
         loss_func=masked_quadratic,
-        sparse_model=True,
     )
 
     assert jnp.allclose(loss, loss_bptt)

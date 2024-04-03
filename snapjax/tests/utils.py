@@ -21,6 +21,7 @@ def get_stacked_rnn(
     hidden_size: int,
     input_size: int,
     seed: int | None = None,
+    sparse: bool = False,
 ):
     if seed is None:
         key = int(time.time() * 1000)
@@ -38,7 +39,7 @@ def get_stacked_rnn(
         layer = RNNLayer(hidden_size=hidden_size, input_size=input_size, key=keys[i])
         layers.append(layer)
 
-    theta = StackedCell(layers)
+    theta = StackedCell(layers, sparse=sparse)
 
     return theta
 
@@ -60,7 +61,7 @@ def get_sparse_continous_rnn(
         W_0, U, dt=0.5, sparsity_fraction=sparsity_fraction, key=sp_key
     )
     rnn = LinearTanhReadout(C, cell=cell)
-    rnn = StackedCell([rnn])
+    rnn = StackedCell([rnn], sparse=True)
 
     return rnn
 
