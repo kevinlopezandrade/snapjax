@@ -25,6 +25,18 @@ def sparse_mask_to_mask(mask: SparseMask | Mask) -> Mask:
     return dense_mask
 
 
+def make_dense_identity_mask(jacobian_mask: _T) -> _T:
+    def _convert(leaf: Mask):
+        mask = jnp.ones(leaf.mask.shape)
+        return Mask(mask)
+
+    jacobian_mask = jtu.tree_map(
+        _convert, jacobian_mask, is_leaf=lambda node: isinstance(node, Mask)
+    )
+
+    return jacobian_mask
+
+
 def densify_jacobian_mask(mask: _T) -> _T:
     """
     Given a mask PyTree, convert all the SparseMasks to Mask.

@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import numpy as np
 import scipy
-from jaxtyping import PRNGKeyArray
+from jaxtyping import Array, PRNGKeyArray
 from numpy.typing import NDArray
 
 
@@ -38,10 +38,19 @@ def exp_sum_sequence_scipy(
     return x_discrete, y, mask
 
 
-def _convolution_with_white_noise(
-    key: PRNGKeyArray, dt: float, signal: NDArray, mean: int = 0, variance: float = 1.0
+def convolution_with_white_noise(
+    key: PRNGKeyArray,
+    dt: float,
+    signal: Array,
+    mean: int = 0,
+    variance: float = 1.0,
+    constant: bool = False,
 ):
-    x_discrete = jnp.sqrt(variance) * jrandom.normal(key, shape=signal.shape) + mean
+    if constant:
+        x_discrete = jnp.ones(shape=signal.shape, dtype=signal.dtype)
+    else:
+        x_discrete = jnp.sqrt(variance) * jrandom.normal(key, shape=signal.shape) + mean
+        x_discrete = x_discrete.at[0].set(0.0)
     y = jnp.convolve(signal, x_discrete, mode="full") * dt
     y = y[: len(signal)]
     return x_discrete, y
@@ -81,7 +90,7 @@ def gen_exp_sum(
 
         keys = jrandom.split(key, N)
         for key in keys:
-            inp, out = _convolution_with_white_noise(key, dt=dt, signal=p_discrete)
+            inp, out = convolution_with_white_noise(key, dt=dt, signal=p_discrete)
             inp = inp.reshape(inp.shape[0], 1)
             out = out.reshape(out.shape[0], 1)
             yield inp, out, mask
@@ -121,7 +130,7 @@ def gen_exp_sum_diag(
 
         keys = jrandom.split(key, N)
         for key in keys:
-            inp, out = _convolution_with_white_noise(key, dt=dt, signal=p_discrete)
+            inp, out = convolution_with_white_noise(key, dt=dt, signal=p_discrete)
             inp = inp.reshape(inp.shape[0], 1)
             out = out.reshape(out.shape[0], 1)
             yield inp, out, mask

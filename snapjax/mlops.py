@@ -13,6 +13,10 @@ class Algorithm(Enum):
         return self.name
 
 
+BPTT = Algorithm.BPTT
+RTRL = Algorithm.RTRL
+
+
 # NOTE: This was written by ChatGPT.
 def ensure_static_codebase(
     excluded_dirs: List[str] = ["runs", "notebooks"], strict: bool = True

@@ -4,7 +4,7 @@ from jax import config
 
 from snapjax.algos import rtrl
 from snapjax.bptt import bptt
-from snapjax.cells.utils import densify_jacobian_mask
+from snapjax.cells.utils import densify_jacobian_mask, make_dense_identity_mask
 from snapjax.losses import masked_quadratic
 from snapjax.sp_jacrev import make_jacobian_projection
 from snapjax.tests.utils import (
@@ -12,7 +12,6 @@ from snapjax.tests.utils import (
     get_random_sequence,
     get_sparse_continous_rnn,
     is_subset_pytree,
-    make_dense_identity_mask,
     make_dense_jacobian_projection,
 )
 

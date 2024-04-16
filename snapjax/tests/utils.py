@@ -164,18 +164,6 @@ def replace_rnn_with_diagonals(model: StackedCell, sparse_weights: bool = False)
     return model
 
 
-def make_dense_identity_mask(jacobian_mask: RTRLStacked) -> RTRLStacked:
-    def _convert(leaf: Mask):
-        mask = jnp.ones(leaf.mask.shape)
-        return Mask(mask)
-
-    jacobian_mask = jtu.tree_map(
-        _convert, jacobian_mask, is_leaf=lambda node: isinstance(node, Mask)
-    )
-
-    return jacobian_mask
-
-
 def make_dense_jacobian_projection(jacobian_projection: RTRLStacked) -> RTRLStacked:
     def _convert(leaf: DenseProjection | SparseProjection):
         if isinstance(leaf, DenseProjection):

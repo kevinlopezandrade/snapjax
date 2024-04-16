@@ -20,3 +20,13 @@ def masked_quadratic(y: Array, y_hat: Array, mask: float):
 
 def masked_l2(y: Array, y_hat: Array, mask: float):
     return mask * jnp.sum((y - y_hat) ** 2)
+
+
+@jax.jit
+def mean_squared_loss(target: Array, pred: Array, mask: float):
+    return mask * 1 / 2 * jnp.mean((target - pred) ** 2)
+
+
+@jax.jit
+def l_infinity(target: Array, pred: Array, mask: float):
+    return mask * jnp.max(jnp.abs(target - pred))
