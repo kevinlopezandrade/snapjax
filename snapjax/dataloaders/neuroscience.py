@@ -328,6 +328,113 @@ def mante(
 
 
 ########################################################################################
+
+
+def romo_seq(
+    key: PRNGKeyArray,
+    dt,
+    fixation_duration=3,
+    stimulus_duration=1,
+    decision_delay_duration=5,
+    decision_duration=10,
+    stim_delay_duration_min=2,
+    stim_delay_duration_max=8,
+    input_amp_min=0.5,
+    input_amp_max=1.5,
+    min_input_diff=0.2,
+    target_amp=0.5,
+    fixate=True,
+    return_ts=False,
+    test=False,
+    original_variant=False,
+):
+    """
+    Romo task.
+    """
+    if original_variant:
+        dim_out = 1
+    else:
+        dim_out = 2
+
+    # Task times
+    fixation_duration_discrete = int(fixation_duration / dt)
+    stimulus_duration_discrete = int(stimulus_duration / dt)
+    decision_delay_duration_discrete = int(decision_delay_duration / dt)
+    decision_duration_discrete = int(decision_duration / dt)
+    stim_0_begin = fixation_duration_discrete
+    stim_0_end = stim_0_begin + stimulus_duration_discrete
+    # After stim_1, there is a random delay...
+    t_max = (
+        fixation_duration
+        + 2 * stimulus_duration
+        + stim_delay_duration_max
+        + decision_delay_duration
+        + decision_duration
+    )
+    n_t_max = int(t_max / dt)
+
+    # Input and target sequences
+    input_samp = np.zeros((n_t_max, 1))
+    target_samp = np.zeros((n_t_max, dim_out))
+    mask_samp = np.zeros((n_t_max,))
+
+    key, stim_delay_key = jrandom.split(key)
+    stim_delay = jrandom.uniform(
+        stim_delay_key, minval=stim_delay_duration_min, maxval=stim_delay_duration_max
+    )
+    # Set indices
+    stim_delay_discrete = int(stim_delay / dt)
+    stim_1_begin = stim_0_end + stim_delay_discrete
+    stim_1_end = stim_1_begin + stimulus_duration_discrete
+    response_begin = stim_1_end + decision_delay_duration_discrete
+    response_end = response_begin + decision_duration_discrete
+
+    while True:
+        input_amps = jrandom.uniform(
+            key, minval=input_amp_min, maxval=input_amp_max, shape=(2,)
+        )
+        input_diff = jnp.abs(input_amps[0] - input_amps[1])
+        if input_diff >= min_input_diff:
+            break
+        else:
+            key, _ = jrandom.split(key)
+
+    larger_input = np.argmax(input_amps)
+
+    # Set input, target
+    input_samp[stim_0_begin:stim_0_end] = input_amps[0]
+    input_samp[stim_1_begin:stim_1_end] = input_amps[1]
+    if original_variant:
+        target_sign = (-1) ** larger_input
+        target_samp[response_begin:response_end] = target_sign * target_amp
+    else:
+        target_samp[response_begin:response_end, larger_input] = target_amp
+    # Mask
+    mask_samp[response_begin:response_end] = 1
+    if fixate:
+        # Set target output to zero until the decision delay
+        mask_samp[:stim_1_end] = 1
+
+    return input_samp, target_samp, mask_samp
+
+
+def gen_romo(key: PRNGKeyArray, **params):
+    def _generator(N: int):
+        with jax.default_device(jax.devices("cpu")[0]):
+            keys = jrandom.split(key, N)
+            for i in range(N):
+                yield romo_seq(key=keys[i], **params)
+
+    inp_dim = 1
+    out_dim = 2
+
+    _params = params.copy()
+    _params["inp_dim"] = inp_dim
+    _params["out_dim"] = out_dim
+
+    return _params, _generator
+
+
 def romo(
     dims,
     dt,
