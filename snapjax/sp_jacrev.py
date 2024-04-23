@@ -29,7 +29,7 @@ class BCOOStructure(eqx.Module):
     indices_csr: Array
     indices_csc: Array
     nse: int = eqx.field(static=True)
-    shape: Sequence[int] = eqx.field(static=True)
+    jacobian_shape: Sequence[int] = eqx.field(static=True)
 
 
 class SparseProjection(eqx.Module):
@@ -40,14 +40,16 @@ class SparseProjection(eqx.Module):
 
 class DenseProjection(eqx.Module):
     projection_matrix: Array
-    shape: Sequence[int] = eqx.field(static=True)
+    jacobian_shape: Sequence[int] = eqx.field(static=True)
 
 
 # Wrapper just to differentiate between BCOO and sparse patterns.
 class SparseMask(eqx.Module):
     indices: Array
-    shape: Sequence[int] = eqx.field(static=True)
-    orig_shape: Sequence[int] | None = eqx.field(static=True)
+    jacobian_shape: Sequence[int] = eqx.field(static=True)
+    orig_jacobian_shape: Sequence[int] | None = eqx.field(static=True)
+    # NOTE: orig_jacobian_shape will be deprecated since we use standard jacobians
+    # now.
 
     def __init__(
         self,
@@ -56,12 +58,12 @@ class SparseMask(eqx.Module):
         orig_shape: Sequence[int] | None = None,
     ):
         self.indices = indices
-        self.shape = shape
-        self.orig_shape = orig_shape
+        self.jacobian_shape = shape
+        self.orig_jacobian_shape = orig_shape
 
 
 class Mask(eqx.Module):
-    mask: Array
+    jacobian_mask: Array
 
 
 # TODO: The following functions: _output_connectivity_from_sparsity,
@@ -139,13 +141,13 @@ def _expand_jacrev_jac(
     """
     assert compressed_jac.ndim == 2
     assert output_coloring.ndim == 1
-    assert sparsity.shape == (output_coloring.size, compressed_jac.shape[1])
+    assert sparsity.jacobian_shape == (output_coloring.size, compressed_jac.shape[1])
     if transpose:
         indices = sparsity.indices_csc
-        shape = sparsity.shape[::-1]
+        shape = sparsity.jacobian_shape[::-1]
     else:
         indices = sparsity.indices_csr
-        shape = sparsity.shape
+        shape = sparsity.jacobian_shape
 
     row, col = indices.T
     compressed_index = (output_coloring[row], col)
@@ -245,13 +247,17 @@ def make_jacobian_projection(sparse_patterns: _T) -> _T:
         else:
             sparsity_scipy = ssparse.coo_matrix(
                 (jnp.ones(sparsity.indices.shape[0]), sparsity.indices.T),
-                shape=sparsity.shape,
+                shape=sparsity.jacobian_shape,
             )
 
         connectivity = _output_connectivity_from_sparsity(sparsity_scipy)
         output_coloring, ncolors = _greedy_color(connectivity, "largest_first")
         output_coloring = jnp.asarray(output_coloring)
-        assert output_coloring.size == sparsity.shape[0]
+        assert (
+            output_coloring.size == sparsity.shape[0]
+            if isinstance(sparsity, BCOO)
+            else sparsity.jacobian_shape[0]
+        )
 
         projection_matrix = (
             jnp.arange(ncolors)[:, jnp.newaxis] == output_coloring[jnp.newaxis, :]
@@ -265,7 +271,10 @@ def make_jacobian_projection(sparse_patterns: _T) -> _T:
         indices_csr = sparsity.indices
         indices_csc = indices_csr[jnp.lexsort(indices_csr.T)]
         sparsity_structure = BCOOStructure(
-            indices_csr, indices_csc, sparsity_scipy.nnz, sparsity.shape
+            indices_csr,
+            indices_csc,
+            sparsity_scipy.nnz,
+            sparsity.shape if isinstance(sparsity, BCOO) else sparsity.jacobian_shape,
         )
         return SparseProjection(projection_matrix, output_coloring, sparsity_structure)
 
@@ -273,7 +282,10 @@ def make_jacobian_projection(sparse_patterns: _T) -> _T:
         if isinstance(node, (SparseMask, BCOO)):
             return _projection_matrix(node)
         elif isinstance(node, Mask):
-            return DenseProjection(jnp.eye(node.mask.shape[0]), shape=node.mask.shape)
+            return DenseProjection(
+                jnp.eye(node.jacobian_mask.shape[0]),
+                jacobian_shape=node.jacobian_mask.shape,
+            )
         else:
             raise ValueError("Leaf must be a SparseMask, Mask or a BCOO")
 

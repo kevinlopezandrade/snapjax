@@ -91,13 +91,13 @@ def test_snap_n_masks():
     # For a diagonal matrix parameterization no matter what
     # n, the mask should be the same.
     W = BCOO.fromdense(jnp.eye(100))
-    mask = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=1)).mask
+    mask = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=1)).jacobian_mask
     assert eqx.tree_equal(mask, jnp.eye(100))
 
-    mask = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=2)).mask
+    mask = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=2)).jacobian_mask
     assert eqx.tree_equal(mask, jnp.eye(100))
 
-    mask = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=3)).mask
+    mask = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=3)).jacobian_mask
     assert eqx.tree_equal(mask, jnp.eye(100))
 
     # Particular graph where up to n=3 the mask changes
@@ -107,21 +107,21 @@ def test_snap_n_masks():
     expected_mask_1 = (
         jnp.array([[1, 1, 1, 0, 0, 0], [0, 0, 0, 1, 0, 0], [0, 0, 0, 0, 1, 1]]) * 1.0
     )
-    mask_1 = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=1)).mask
+    mask_1 = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=1)).jacobian_mask
     assert eqx.tree_equal(mask_1, expected_mask_1)
 
     expected_mask_2 = (
         jnp.array([[1, 1, 1, 1, 1, 1], [0, 0, 0, 1, 0, 0], [1, 1, 1, 0, 1, 1]]) * 1.0
     )
-    mask_2 = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=2)).mask
+    mask_2 = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=2)).jacobian_mask
     assert eqx.tree_equal(mask_2, expected_mask_2)
 
     expected_mask_3 = (
         jnp.array([[1, 1, 1, 1, 1, 1], [0, 0, 0, 1, 0, 0], [1, 1, 1, 1, 1, 1]]) * 1.0
     )
-    mask_3 = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=3)).mask
+    mask_3 = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=3)).jacobian_mask
     assert eqx.tree_equal(mask_3, expected_mask_3)
 
     # Here it must remain the same as before
-    mask_4 = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=4)).mask
+    mask_4 = sparse_mask_to_mask(snap_n_mask_bcoo(W, n=4)).jacobian_mask
     assert eqx.tree_equal(mask_4, expected_mask_3)

@@ -35,14 +35,14 @@ def make_zeros_jacobians_sp(jacobian_projection: RTRLStacked):
     # Jacobians are saved as the tranpose jacobians.
     def _sparse_jacobian(leaf: SparseProjection | DenseProjection):
         if isinstance(leaf, DenseProjection):
-            return standard_jacobian(jnp.zeros(leaf.shape))
+            return standard_jacobian(jnp.zeros(leaf.jacobian_shape))
 
         zeros = jnp.zeros(leaf.sparse_def.nse)
         indices = leaf.sparse_def.indices_csc[:, ::-1]  # For the transpose.
         structure = (zeros, indices)
         return BCOO(
             structure,
-            shape=leaf.sparse_def.shape[::-1],  # For the transpose.
+            shape=leaf.sparse_def.jacobian_shape[::-1],  # For the transpose.
             # This is guaranteed since csc is sorted by colum and we transpose.
             indices_sorted=True,
             unique_indices=True,
@@ -143,7 +143,7 @@ def compute_masked_jacobian(
             res = sparse_matching_addition(i_t, prod)
             return res
         else:
-            return standard_jacobian(j_mask.mask) * (
+            return standard_jacobian(j_mask.jacobian_mask) * (
                 standard_jacobian(i_t) + dynamics @ standard_jacobian(j_t_prev)
             )
 

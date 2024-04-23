@@ -19,15 +19,17 @@ def sparse_mask_to_mask(mask: SparseMask | Mask) -> Mask:
 
     indices = mask.indices
     data = jnp.ones(indices.shape[0])
-    dense_mask = BCOO((data, indices), shape=mask.shape, unique_indices=True).todense()
-    dense_mask = Mask(dense_mask.reshape(mask.orig_shape))
+    dense_mask = BCOO(
+        (data, indices), shape=mask.jacobian_shape, unique_indices=True
+    ).todense()
+    dense_mask = Mask(dense_mask.reshape(mask.orig_jacobian_shape))
 
     return dense_mask
 
 
 def make_dense_identity_mask(jacobian_mask: _T) -> _T:
     def _convert(leaf: Mask):
-        mask = jnp.ones(leaf.mask.shape)
+        mask = jnp.ones(leaf.jacobian_mask.shape)
         return Mask(mask)
 
     jacobian_mask = jtu.tree_map(

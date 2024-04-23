@@ -170,7 +170,9 @@ def make_dense_jacobian_projection(jacobian_projection: RTRLStacked) -> RTRLStac
             return leaf
         else:
             projection_matrix = jnp.eye(leaf.projection_matrix.shape[1])
-            return DenseProjection(projection_matrix, shape=leaf.sparse_def.shape)
+            return DenseProjection(
+                projection_matrix, jacobian_shape=leaf.sparse_def.jacobian_shape
+            )
 
     jacobian_projection = jtu.tree_map(
         _convert,
