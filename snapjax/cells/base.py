@@ -22,6 +22,9 @@ class RTRLCell(eqx.Module):
 
     hidden_size: eqx.AbstractVar[int]
     input_size: eqx.AbstractVar[int]
+    custom_grad_update: bool = eqx.field(static=True, default=False)
+    custom_trace_update: bool = eqx.field(static=True, default=False)
+    complex_hidden_state: bool = eqx.field(static=True, default=False)
 
     @abstractmethod
     def f(self, state: State, input: Array) -> State: ...
@@ -65,8 +68,17 @@ class RTRLCell(eqx.Module):
         )
         return zero_jacobians
 
-    @abstractmethod
-    def make_snap_n_mask(self, n: int) -> Self: ...
+    def make_zero_traces(self) -> Self:
+        raise NotImplementedError()
+
+    def make_snap_n_mask(self, n: int) -> Self:
+        raise NotImplementedError()
+
+    def update_grads(self, hidden_state_grad: Array, *args) -> Self:
+        raise NotImplementedError()
+
+    def update_traces(self, *args):
+        raise NotImplementedError()
 
 
 class RTRLLayer(eqx.Module):

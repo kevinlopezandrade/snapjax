@@ -40,4 +40,4 @@ res = timeit.timeit(
     ),
     number=1,
 )
-print(res)
+print(res) # 1.26 approx in GTX 3090

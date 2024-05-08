@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, List, Sequence, Tuple, cast
+from typing import Any, Callable, List, Sequence, Tuple, cast
 
 import equinox as eqx
 import jax
@@ -17,6 +17,7 @@ from snapjax.cells.base import (
     State,
     is_rtrl_cell,
 )
+from snapjax.cells.lru import Traces
 from snapjax.losses import l2
 from snapjax.sp_jacrev import (
     DenseProjection,
@@ -61,9 +62,12 @@ def make_zeros_jacobians(model: RTRLStacked):
     cells = eqx.filter(model, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell)
 
     def _cell_zero_jacobian(cell: RTRLCell):
-        return jtu.tree_map(
-            lambda leaf: standard_jacobian(leaf), cell.make_zero_jacobians()
-        )
+        if cell.custom_trace_update:
+            return cell.make_zero_traces()
+        else:
+            return jtu.tree_map(
+                lambda leaf: standard_jacobian(leaf), cell.make_zero_jacobians()
+            )
 
     zero_jacobians = jtu.tree_map(
         lambda cell: _cell_zero_jacobian(cell),
@@ -94,7 +98,12 @@ def make_perturbations(model: RTRLStacked):
     for layer in model.layers:
         if isinstance(layer, RTRLLayer):
             cell = model.layers[cell_index].cell
-            perturbations.append(jnp.zeros(cell.hidden_size))
+            zeros = jnp.zeros(cell.hidden_size)
+
+            if cell.complex_hidden_state:
+                zeros = zeros * 1j
+
+            perturbations.append(zeros)
             cell_index += 1
 
     return tuple(perturbations)
@@ -181,8 +190,9 @@ def update_cell_jacobians(
 
 @jax.jit
 def update_jacobians_rtrl(
-    jacobians_prev: RTRLStacked,
-    inmediate_jacobians: List[Tuple[RTRLCell, Array]],
+    jacobians_prev: RTRLStacked | Traces,  # Also known as the trace
+    inmediate_jacobians: List[Tuple[RTRLCell, Array] | Any],
+    theta_rtrl: RTRLStacked,
     jacobian_mask: RTRLStacked | None = None,
 ):
     # Jax will do loop unrolling here, but number of layers is not that big
@@ -191,25 +201,40 @@ def update_jacobians_rtrl(
     cell_index = 0
     for layer in jacobians_prev.layers:
         if isinstance(layer, RTRLLayer):
-            I_t, D_t = inmediate_jacobians[cell_index]
-            J_t_prev = jacobians.layers[cell_index].cell
-            if jacobian_mask:
-                jacobian_cell_mask = jacobian_mask.layers[cell_index].cell
+            if not theta_rtrl.layers[cell_index].cell.custom_trace_update:
+                I_t, D_t = inmediate_jacobians[cell_index]
+                J_t_prev = jacobians.layers[cell_index].cell
+                if jacobian_mask:
+                    jacobian_cell_mask = jacobian_mask.layers[cell_index].cell
+                else:
+                    jacobian_cell_mask = None
+
+                J_t = update_cell_jacobians(
+                    I_t,
+                    D_t,
+                    J_t_prev,
+                    jacobian_cell_mask=jacobian_cell_mask,
+                )
+
+                jacobians = eqx.tree_at(
+                    lambda model: model.layers[cell_index].cell, jacobians, J_t
+                )
+
+                cell_index += 1
             else:
-                jacobian_cell_mask = None
+                # Aux here contains every auxiliary data to update
+                # the traces.
+                aux = inmediate_jacobians[cell_index]
+                prev_trace = jacobians.layers[cell_index].cell
+                trace = theta_rtrl.layers[cell_index].cell.update_traces(
+                    prev_trace, aux
+                )
 
-            J_t = update_cell_jacobians(
-                I_t,
-                D_t,
-                J_t_prev,
-                jacobian_cell_mask=jacobian_cell_mask,
-            )
+                jacobians = eqx.tree_at(
+                    lambda model: model.layers[cell_index].cell, jacobians, trace
+                )
 
-            jacobians = eqx.tree_at(
-                lambda model: model.layers[cell_index].cell, jacobians, J_t
-            )
-
-            cell_index += 1
+                cell_index += 1
 
     return jacobians
 
@@ -218,7 +243,8 @@ def update_jacobians_rtrl(
 def update_rtrl_cells_grads(
     grads: RTRLStacked,
     hidden_states_grads: List[Array],
-    jacobians: RTRLStacked,
+    jacobians: RTRLStacked | Traces,
+    theta_rtrl: RTRLStacked,
 ):
     def matmul_by_h(ht_grad: Array, jacobian: Array | BCOO):
         if isinstance(jacobian, BCOO):
@@ -231,11 +257,18 @@ def update_rtrl_cells_grads(
         if isinstance(layer, RTRLLayer):
             ht_grad = hidden_states_grads[cell_index]
             rtrl_cell_jac = jacobians.layers[cell_index].cell
-            rtrl_cell_grads = jax.tree_map(
-                lambda jacobian: matmul_by_h(ht_grad, jacobian),
-                rtrl_cell_jac,
-                is_leaf=lambda node: isinstance(node, BCOO),
-            )
+
+            if theta_rtrl.layers[cell_index].cell.custom_grad_update:
+                rtrl_cell_grads = theta_rtrl.layers[cell_index].cell.update_grads(
+                    ht_grad, rtrl_cell_jac
+                )
+            else:
+                rtrl_cell_grads = jax.tree_map(
+                    lambda jacobian: matmul_by_h(ht_grad, jacobian),
+                    rtrl_cell_jac,
+                    is_leaf=lambda node: isinstance(node, BCOO),
+                )
+
             grads = eqx.tree_at(
                 lambda grads: grads.layers[cell_index].cell,
                 grads,
@@ -309,10 +342,13 @@ def forward_rtrl(
     jacobians = update_jacobians_rtrl(
         jacobians_prev,
         inmediate_jacobians,
+        theta_rtrl,
         jacobian_mask=jacobian_mask,
     )
 
-    grads = update_rtrl_cells_grads(spatial_grads, hidden_states_grads, jacobians)
+    grads = update_rtrl_cells_grads(
+        spatial_grads, hidden_states_grads, jacobians, theta_rtrl
+    )
 
     # Reshape the flattened gradients of the RTRL cells.
     grads = jtu.tree_map(
