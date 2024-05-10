@@ -67,7 +67,7 @@ def _gen_ssm(
         def generator(N: int, T: int):
             keys = jrandom.split(data_key, N)
             kernel = K_conv(W, b, c, T)
-            mask = jnp.ones(T)
+            mask = jnp.ones(T, dtype=jnp.uint8)
             for key in keys:
                 inp = jrandom.normal(key, shape=(T,))
                 out = causal_convolution(inp, kernel)

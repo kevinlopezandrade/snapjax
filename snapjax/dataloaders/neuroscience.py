@@ -151,7 +151,7 @@ def flip_flop_sequence(
 
     input_samp = np.zeros((n_t_max, 2))
     target_samp = np.zeros((n_t_max, 2))
-    mask_samp = np.zeros((n_t_max,))
+    mask_samp = np.zeros((n_t_max,), dtype=np.uint8)
 
     idx_t = fixation_duration_discrete
 
@@ -376,7 +376,7 @@ def romo_seq(
     # Input and target sequences
     input_samp = np.zeros((n_t_max, 1))
     target_samp = np.zeros((n_t_max, dim_out))
-    mask_samp = np.zeros((n_t_max,))
+    mask_samp = np.zeros((n_t_max,), dtype=np.uint8)
 
     key, stim_delay_key = jrandom.split(key)
     stim_delay = jrandom.uniform(

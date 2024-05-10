@@ -30,8 +30,8 @@ def exp_sum_sequence_scipy(
     y = np.convolve(p_discrete, x_discrete, mode="full") * dt
     y = y[: len(times)]
 
-    mask = np.zeros(times.shape[0])
-    mask[-1] = 1.0
+    mask = np.zeros(times.shape[0], dtype=np.uint8)
+    mask[-1] = 1
 
     # test = np.trapz(p_discrete * x_discrete[::-1], dx=dt)
 
@@ -83,10 +83,10 @@ def gen_exp_sum(
 
         # Mask
         if mask_target:
-            mask = jnp.zeros(len(times))
-            mask = mask.at[-1].set(1.0)
+            mask = jnp.zeros(len(times), dtype=jnp.uint8)
+            mask = mask.at[-1].set(1)
         else:
-            mask = jnp.ones(len(times))
+            mask = jnp.ones(len(times), dtype=jnp.uint8)
 
         keys = jrandom.split(key, N)
         for key in keys:
@@ -123,10 +123,10 @@ def gen_exp_sum_diag(
 
         # Mask
         if mask_target:
-            mask = jnp.zeros(len(times))
-            mask = mask.at[-1].set(1.0)
+            mask = jnp.zeros(len(times), dtype=jnp.uint8)
+            mask = mask.at[-1].set(1)
         else:
-            mask = jnp.ones(len(times))
+            mask = jnp.ones(len(times), dtype=jnp.uint8)
 
         keys = jrandom.split(key, N)
         for key in keys:
