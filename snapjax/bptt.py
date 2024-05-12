@@ -1,5 +1,6 @@
 from typing import Callable, cast
 
+import equinox as eqx
 import jax
 import jax.experimental.sparse as jsparse
 import jax.numpy as jnp
@@ -57,7 +58,7 @@ def bptt(
         return losses, preds
 
     if not model.sparse:
-        (acc_loss, preds), acc_grads = jax.value_and_grad(_loss, has_aux=True)(
+        (acc_loss, preds), acc_grads = eqx.filter_value_and_grad(_loss, has_aux=True)(
             model, inputs, targets
         )
     else:

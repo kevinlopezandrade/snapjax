@@ -1,6 +1,7 @@
 from functools import partial
 from typing import Any, Dict, Tuple
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -23,13 +24,13 @@ from snapjax.mlops import Algorithm, get_algorithm
 from snapjax.sp_jacrev import make_jacobian_projection
 
 
-@jax.jit
+@eqx.filter_jit
 def sparse_aware_update(model: RTRLStacked, updates: RTRLStacked):
     """
     For models that contain weights as BCOO arrays.
     """
 
-    def _update(weight: BCOO | Array, update: Array):
+    def _update(weight: BCOO | Array, update: Array | None):
         if isinstance(weight, BCOO):
             return BCOO(
                 (weight.data + update, weight.indices),
@@ -37,8 +38,10 @@ def sparse_aware_update(model: RTRLStacked, updates: RTRLStacked):
                 indices_sorted=weight.indices_sorted,
                 unique_indices=weight.unique_indices,
             )
-        else:
+        elif eqx.is_array_like(weight):
             return weight + update
+        else:
+            return weight
 
     model = jtu.tree_map(
         _update,
@@ -50,7 +53,7 @@ def sparse_aware_update(model: RTRLStacked, updates: RTRLStacked):
     return model
 
 
-@partial(jax.jit, static_argnames=["optimizer"])
+@eqx.filter_jit
 def apply_update(
     model: RTRLStacked, grads: RTRLStacked, state: Any, optimizer: Any
 ) -> Tuple[RTRLStacked, Any]:
