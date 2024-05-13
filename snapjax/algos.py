@@ -57,6 +57,7 @@ def make_zeros_jacobians_sp(jacobian_projection: RTRLStacked):
     return zero_jacobians
 
 
+@eqx.filter_jit
 def make_zeros_jacobians(model: RTRLStacked):
     cells = eqx.filter(model, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell)
 
@@ -77,11 +78,12 @@ def make_zeros_jacobians(model: RTRLStacked):
     return zero_jacobians
 
 
+@eqx.filter_jit
 def make_zeros_grads(model: RTRLStacked):
     def zeros_in_leaf(leaf):
         if isinstance(leaf, BCOO):
             return jnp.zeros(leaf.nse)
-        else:
+        elif eqx.is_array(leaf):
             return jnp.zeros(shape=leaf.shape)
 
     zero_grads = jax.tree_map(
