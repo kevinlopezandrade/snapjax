@@ -169,3 +169,11 @@ def create_date_folder(should_raise: bool = False):
         os.mkdir(folder_path)
         print(f"Folder '{today_str}' created successfully.")
         return folder_path
+
+
+def generate_timestamp():
+    # Get the current date and time
+    now = datetime.now()
+    timestamp = now.strftime("%Y%m%d%H%M%S")
+
+    return timestamp

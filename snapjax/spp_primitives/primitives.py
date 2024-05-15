@@ -21,11 +21,6 @@ indices of non zero entries. and performs Sp(A @ B).
 
 It returns data, sp
 """
-# WTF with this bug. I need to execute
-# a dumb call to jax in order for my registration
-# with xla_client does not fail. I need to further test
-# this and maybe report it to the github.
-jnp.empty(1)
 
 pythonapi.PyCapsule_New.argtypes = [
     ctypes.c_void_p,  # void* pointer
@@ -49,7 +44,7 @@ spp_csr_matmul_sig = types.void(
 )
 
 
-def pycapsule_new(ptr, name, destructor=None) -> ctypes.py_object:
+def pycapsule_new(ptr, destructor=None) -> ctypes.py_object:
     """
     Wraps a C function pointer into an XLA-compatible PyCapsule.
 
@@ -61,7 +56,8 @@ def pycapsule_new(ptr, name, destructor=None) -> ctypes.py_object:
     Returns
         a PyCapsule (ctypes.py_object)
     """
-    return ctypes.pythonapi.PyCapsule_New(ptr, name, None)
+    magic_name = b"xla._CUSTOM_CALL_TARGET"
+    return ctypes.pythonapi.PyCapsule_New(ptr, magic_name, None)
 
 
 @cfunc(spp_csr_matmul_sig)
@@ -167,9 +163,7 @@ spp_csr_matmul_p.def_abstract_eval(spp_csr_matmul_abstract_eval)
 
 xla_client.register_custom_call_target(
     b"spp_csr_matmul",
-    pycapsule_new(
-        cfunc(xla_call_sig)(xla_spp_csr_matmul).address, b"xla._CUSTOM_CALL_TARGET"
-    ),
+    pycapsule_new(cfunc(xla_call_sig)(xla_spp_csr_matmul).address),
     "cpu",
 )
 
