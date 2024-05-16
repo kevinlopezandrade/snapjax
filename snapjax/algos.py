@@ -86,7 +86,7 @@ def make_zeros_grads(model: RTRLStacked):
         elif eqx.is_array(leaf):
             return jnp.zeros(shape=leaf.shape)
 
-    zero_grads = jax.tree_map(
+    zero_grads = jtu.tree_map(
         zeros_in_leaf, model, is_leaf=lambda node: isinstance(node, BCOO)
     )
 
@@ -157,7 +157,7 @@ def compute_masked_jacobian(
                 standard_jacobian(i_t) + dynamics @ standard_jacobian(j_t_prev)
             )
 
-    J_t = jax.tree_map(
+    J_t = jtu.tree_map(
         lambda i_t, j_t_prev, j_mask: _update(i_t, j_t_prev, j_mask),
         I_t,
         J_t_prev,
@@ -180,7 +180,7 @@ def update_cell_jacobians(
         J_t = compute_masked_jacobian(jacobian_cell_mask, I_t, dynamics, J_t_prev)
         return J_t
     else:
-        J_t = jax.tree_map(
+        J_t = jtu.tree_map(
             lambda i_t, j_t_prev: standard_jacobian(i_t)
             + dynamics @ standard_jacobian(j_t_prev),
             I_t,
@@ -264,7 +264,7 @@ def update_rtrl_cells_grads(
                     ht_grad, rtrl_cell_jac
                 )
             else:
-                rtrl_cell_grads = jax.tree_map(
+                rtrl_cell_grads = jtu.tree_map(
                     lambda jacobian: matmul_by_h(ht_grad, jacobian),
                     rtrl_cell_jac,
                     is_leaf=lambda node: isinstance(node, BCOO),

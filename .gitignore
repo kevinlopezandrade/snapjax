@@ -5,6 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
+!snapjax/spp_primitives/sp_ops.cpython-311-x86_64-linux-gnu.so
 
 # Distribution / packaging
 .Python
