@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Any, Callable, List, Sequence, Tuple, cast
 
 import equinox as eqx
@@ -30,7 +31,7 @@ from snapjax.spp_primitives.primitives import spp_csr_matmul
 config.update("jax_numpy_rank_promotion", "raise")
 
 
-@eqx.filter_jit
+@jax.jit
 def make_zeros_jacobians_sp(jacobian_projection: RTRLStacked):
     # Jacobians are saved as the tranpose jacobians.
     def _sparse_jacobian(leaf: SparseProjection | DenseProjection):
@@ -57,7 +58,7 @@ def make_zeros_jacobians_sp(jacobian_projection: RTRLStacked):
     return zero_jacobians
 
 
-@eqx.filter_jit
+@jax.jit
 def make_zeros_jacobians(model: RTRLStacked):
     cells = eqx.filter(model, lambda leaf: is_rtrl_cell(leaf), is_leaf=is_rtrl_cell)
 
@@ -78,7 +79,7 @@ def make_zeros_jacobians(model: RTRLStacked):
     return zero_jacobians
 
 
-@eqx.filter_jit
+@jax.jit
 def make_zeros_grads(model: RTRLStacked):
     def zeros_in_leaf(leaf):
         if isinstance(leaf, BCOO):
@@ -110,7 +111,7 @@ def make_perturbations(model: RTRLStacked):
     return tuple(perturbations)
 
 
-@eqx.filter_jit
+@jax.jit
 def dense_coo_product(D: Array, J_T: BCOO, sp_T: Array):
     # TO CSR
     J_T = BCSR.from_bcoo(J_T)
@@ -121,7 +122,7 @@ def dense_coo_product(D: Array, J_T: BCOO, sp_T: Array):
     return BCOO((data, sp_T), shape=J_T.shape, indices_sorted=True, unique_indices=True)
 
 
-@eqx.filter_jit
+@jax.jit
 def sparse_matching_addition(A: BCOO, B: BCOO) -> BCOO:
     # Assumes A and B have the same sparsity
     # pattern and that their indices are ordered.
@@ -133,7 +134,7 @@ def sparse_matching_addition(A: BCOO, B: BCOO) -> BCOO:
     )
 
 
-@eqx.filter_jit
+@jax.jit
 def compute_masked_jacobian(
     jacobian_mask: RTRLCell, I_t: RTRLCell, dynamics: Array, J_t_prev: RTRLCell
 ):
@@ -168,7 +169,7 @@ def compute_masked_jacobian(
     return J_t
 
 
-@eqx.filter_jit
+@jax.jit
 def update_cell_jacobians(
     I_t: RTRLCell,
     dynamics: Array,
@@ -189,7 +190,7 @@ def update_cell_jacobians(
         return J_t
 
 
-@eqx.filter_jit
+@jax.jit
 def update_jacobians_rtrl(
     jacobians_prev: RTRLStacked | Traces,  # Also known as the trace
     inmediate_jacobians: List[Tuple[RTRLCell, Array] | Any],
@@ -240,7 +241,7 @@ def update_jacobians_rtrl(
     return jacobians
 
 
-@eqx.filter_jit
+@jax.jit
 def update_rtrl_cells_grads(
     grads: RTRLStacked,
     hidden_states_grads: List[Array],
@@ -282,7 +283,7 @@ def update_rtrl_cells_grads(
     return grads
 
 
-@eqx.filter_jit
+@partial(jax.jit, static_argnames=["loss_func"])
 def step_loss(
     model_spatial_and_perturbations: Tuple[RTRLStacked, Stacked[Array]],
     model_rtrl: RTRLStacked,
@@ -321,7 +322,7 @@ def forward_rtrl(
         lambda leaf: is_rtrl_cell(leaf),
         is_leaf=is_rtrl_cell,
     )
-    step_loss_and_grad = eqx.filter_value_and_grad(
+    step_loss_and_grad = jax.value_and_grad(
         jtu.Partial(step_loss, loss_func=loss_func), has_aux=True
     )
     perturbations = make_perturbations(theta_rtrl)
@@ -367,7 +368,7 @@ def forward_rtrl(
     return h_t, grads, jacobians, loss_t, y_hat
 
 
-@eqx.filter_jit
+@jax.jit
 def make_init_state(model: RTRLStacked) -> Stacked[State]:
     states: Sequence[State] = []
     for layer in model.layers:

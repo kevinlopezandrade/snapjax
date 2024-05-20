@@ -24,7 +24,7 @@ from snapjax.mlops import Algorithm, get_algorithm
 from snapjax.sp_jacrev import make_jacobian_projection
 
 
-@eqx.filter_jit
+@jax.jit
 def sparse_aware_update(model: RTRLStacked, updates: RTRLStacked):
     """
     For models that contain weights as BCOO arrays.
@@ -53,7 +53,7 @@ def sparse_aware_update(model: RTRLStacked, updates: RTRLStacked):
     return model
 
 
-@eqx.filter_jit
+@partial(jax.jit, static_argnums=3)
 def apply_update(
     model: RTRLStacked, grads: RTRLStacked, state: Any, optimizer: Any
 ) -> Tuple[RTRLStacked, Any]:
