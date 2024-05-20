@@ -2,25 +2,39 @@ from typing import Callable, Protocol
 
 import jax
 import jax.numpy as jnp
-import optax
+import numpy as np
+
+
+def cosine_decay_schedule(
+    init_value: float,
+    decay_steps: int,
+    alpha: float = 0.0,
+    exponent: float = 1.0,
+):
+    def schedule(count):
+        count = np.minimum(count, decay_steps)
+        cosine_decay = 0.5 * (1 + np.cos(np.pi * count / decay_steps))
+        decayed = (1 - alpha) * cosine_decay**exponent + alpha
+        return init_value * decayed
+
+    return schedule
 
 
 class Annealer(Protocol):
     @staticmethod
-    def init(*args, **kwargs) -> Callable[[int], float]:
-        ...
+    def init(*args, **kwargs) -> Callable[[int], float]: ...
 
 
 class CosineCoin:
     @staticmethod
     def init(end_step: int):
-        return optax.cosine_decay_schedule(1, end_step)
+        return cosine_decay_schedule(1, end_step)
 
 
 class ComplementCosineCoin:
     @staticmethod
     def init(end_step: int):
-        aux_func = optax.cosine_decay_schedule(1, end_step)
+        aux_func = cosine_decay_schedule(1, end_step)
         return lambda step: 1 - aux_func(step)
 
 
