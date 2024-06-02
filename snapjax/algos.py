@@ -283,7 +283,7 @@ def update_rtrl_cells_grads(
     return grads
 
 
-@partial(jax.jit, static_argnames=["loss_func"])
+@partial(jax.jit, static_argnums=7)
 def step_loss(
     model_spatial_and_perturbations: Tuple[RTRLStacked, Stacked[Array]],
     model_rtrl: RTRLStacked,
