@@ -1,11 +1,18 @@
+from abc import abstractmethod
 from functools import partial
-from typing import Any
+from typing import Protocol, Tuple
 
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import numpy as np
-from jaxtyping import PRNGKeyArray
+from jaxtyping import Array, PRNGKeyArray
+
+
+class OnlineDataSet(Protocol):
+    @abstractmethod
+    def sample(self, key: PRNGKeyArray) -> Tuple[Array, Array, Array]:
+        pass
 
 
 class LinearSystem:
@@ -151,10 +158,92 @@ class LinearSystem:
             return jnp.abs(eigvals).min(), jnp.abs(eigvals).max()
 
 
+class FlipFlop:
+    def __init__(
+        self,
+        dt: float = 0.5,
+        t_max: float = 50,
+        fixation_duration: float = 1,
+        stimulus_duration: float = 1,
+        decision_delay_duration: float = 5,
+        stim_delay_duration_min: float = 5,
+        stim_delay_duration_max: float = 25,
+        input_amp: float = 1.0,
+        target_amp: float = 0.5,
+        fixate: float = False,
+    ):
+        self.dt = dt
+        self.t_max = t_max
+        self.fixation_duration = fixation_duration
+        self.stimulus_duration = stimulus_duration
+        self.decision_delay_duration = decision_delay_duration
+        self.stim_delay_duration_min = stim_delay_duration_min
+        self.stim_delay_duration_max = stim_delay_duration_max
+        self.input_amp = input_amp
+        self.target_amp = target_amp
+        self.fixate = fixate
+
+        self.inp_dim = 2
+        self.out_dim = 2
+
+    def sample(self, key: PRNGKeyArray):
+        fixation_duration_discrete = int(self.fixation_duration / self.dt)
+        stimulus_duration_discrete = int(self.stimulus_duration / self.dt)
+        decision_delay_duration_discrete = int(self.decision_delay_duration / self.dt)
+        n_t_max = int(self.t_max / self.dt)
+        choices = np.array([0, 1])
+        signs = np.array([-1, 1])
+
+        input_samp = np.zeros((n_t_max, 2))
+        target_samp = np.zeros((n_t_max, 2))
+        mask_samp = np.zeros((n_t_max,), dtype=np.uint8)
+
+        idx_t = fixation_duration_discrete
+
+        if self.fixate:
+            # Mask
+            mask_samp[:idx_t] = 1
+
+        while True:
+            # Interval until next pulse.
+            key, interval_key, channel_key, sign_key = jrandom.split(key, 4)
+            interval = jrandom.uniform(
+                key=interval_key,
+                minval=self.stim_delay_duration_min,
+                maxval=self.stim_delay_duration_max,
+            )
+            interval += self.decision_delay_duration
+
+            # Next pulse start index.
+            n_t_interval = int(interval / self.dt)
+            idx_tp1 = idx_t + n_t_interval
+
+            channel = jrandom.choice(channel_key, choices).item()
+            sign = jrandom.choice(sign_key, signs).item()
+
+            # Input
+            input_samp[idx_t : idx_t + stimulus_duration_discrete, channel] = (
+                sign * self.input_amp
+            )
+            # Target
+            target_samp[idx_t + decision_delay_duration_discrete : idx_tp1, channel] = (
+                sign * self.target_amp
+            )
+            # Mask
+            mask_samp[idx_t + decision_delay_duration_discrete : idx_tp1] = 1
+            # Update
+            idx_t = idx_tp1
+
+            if idx_t > n_t_max:
+                break
+
+        return jnp.array(input_samp), jnp.array(target_samp), jnp.array(mask_samp)
+
+
 class OnlineRegressionDataLoader:
     def __init__(
         self,
-        dataset,
+        dataset: OnlineDataSet,
         key: PRNGKeyArray,
         size: int,
         copy_mask: bool = False,
