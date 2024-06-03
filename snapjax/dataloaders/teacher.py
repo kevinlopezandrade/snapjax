@@ -275,6 +275,9 @@ class Romo:
         self.test = test
         self.original_variant = original_variant
 
+        self.inp_dim = 1
+        self.out_dim = 2
+
     def sample(self, key: PRNGKeyArray):
         if self.original_variant:
             dim_out = 1
