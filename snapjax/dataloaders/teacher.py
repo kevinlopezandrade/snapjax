@@ -240,6 +240,112 @@ class FlipFlop:
         return jnp.array(input_samp), jnp.array(target_samp), jnp.array(mask_samp)
 
 
+class Romo:
+    def __init__(
+        self,
+        dt: float,
+        fixation_duration: float = 3,
+        stimulus_duration: float = 1,
+        decision_delay_duration: float = 5,
+        decision_duration: float = 10,
+        stim_delay_duration_min: float = 2,
+        stim_delay_duration_max: float = 8,
+        input_amp_min: float = 0.5,
+        input_amp_max: float = 1.5,
+        min_input_diff: float = 0.2,
+        target_amp: float = 0.5,
+        fixate: bool = True,
+        return_ts: bool = False,
+        test: bool = False,
+        original_variant: bool = False,
+    ):
+        self.dt = dt
+        self.fixation_duration = fixation_duration
+        self.stimulus_duration = stimulus_duration
+        self.decision_delay_duration = decision_delay_duration
+        self.decision_duration = decision_duration
+        self.stim_delay_duration_min = stim_delay_duration_min
+        self.stim_delay_duration_max = stim_delay_duration_max
+        self.input_amp_min = input_amp_min
+        self.input_amp_max = input_amp_max
+        self.min_input_diff = min_input_diff
+        self.target_amp = target_amp
+        self.fixate = fixate
+        self.return_ts = return_ts
+        self.test = test
+        self.original_variant = original_variant
+
+    def sample(self, key: PRNGKeyArray):
+        if self.original_variant:
+            dim_out = 1
+        else:
+            dim_out = 2
+
+        # Task times
+        fixation_duration_discrete = int(self.fixation_duration / self.dt)
+        stimulus_duration_discrete = int(self.stimulus_duration / self.dt)
+        decision_delay_duration_discrete = int(self.decision_delay_duration / self.dt)
+        decision_duration_discrete = int(self.decision_duration / self.dt)
+        stim_0_begin = fixation_duration_discrete
+        stim_0_end = stim_0_begin + stimulus_duration_discrete
+        # After stim_1, there is a random delay...
+        t_max = (
+            self.fixation_duration
+            + 2 * self.stimulus_duration
+            + self.stim_delay_duration_max
+            + self.decision_delay_duration
+            + self.decision_duration
+        )
+        n_t_max = int(t_max / self.dt)
+
+        # Input and target sequences
+        input_samp = np.zeros((n_t_max, 1))
+        target_samp = np.zeros((n_t_max, dim_out))
+        mask_samp = np.zeros((n_t_max,), dtype=np.uint8)
+
+        key, stim_delay_key = jrandom.split(key)
+        stim_delay = jrandom.uniform(
+            stim_delay_key,
+            minval=self.stim_delay_duration_min,
+            maxval=self.stim_delay_duration_max,
+        )
+        # Set indices
+        stim_delay_discrete = int(stim_delay / self.dt)
+        stim_1_begin = stim_0_end + stim_delay_discrete
+        stim_1_end = stim_1_begin + stimulus_duration_discrete
+        response_begin = stim_1_end + decision_delay_duration_discrete
+        response_end = response_begin + decision_duration_discrete
+
+        while True:
+            input_amps = jrandom.uniform(
+                key, minval=self.input_amp_min, maxval=self.input_amp_max, shape=(2,)
+            )
+            input_diff = jnp.abs(input_amps[0] - input_amps[1])
+            if input_diff >= self.min_input_diff:
+                break
+            else:
+                key, _ = jrandom.split(key)
+
+        larger_input = np.argmax(input_amps)
+
+        # Set input, target
+        input_samp[stim_0_begin:stim_0_end] = input_amps[0]
+        input_samp[stim_1_begin:stim_1_end] = input_amps[1]
+        if self.original_variant:
+            target_sign = (-1) ** larger_input
+            target_samp[response_begin:response_end] = target_sign * self.target_amp
+        else:
+            target_samp[response_begin:response_end, larger_input] = self.target_amp
+        # Mask
+        mask_samp[response_begin:response_end] = 1
+
+        if self.fixate:
+            # Set target output to zero until the decision delay
+            mask_samp[:stim_1_end] = 1
+
+        return jnp.array(input_samp), jnp.array(target_samp), jnp.array(mask_samp)
+
+
 class OnlineRegressionDataLoader:
     def __init__(
         self,
