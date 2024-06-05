@@ -92,8 +92,8 @@ class RNN(RTRLCell):
 
 class RNNLayer(RTRLLayer):
     cell: RNN
-    C: eqx.nn.Linear
-    D: eqx.nn.Linear
+    # C: eqx.nn.Linear
+    # D: eqx.nn.Linear
     d_inp: int = eqx.field(static=True)
     d_out: int = eqx.field(static=True)
 
@@ -107,8 +107,8 @@ class RNNLayer(RTRLLayer):
     ):
         cell_key, c_key, d_key = jax.random.split(key, 3)
         self.cell = RNN(hidden_size, input_size, use_bias=use_bias, key=cell_key)
-        self.C = eqx.nn.Linear(hidden_size, hidden_size, use_bias=False, key=c_key)
-        self.D = eqx.nn.Linear(input_size, hidden_size, use_bias=False, key=d_key)
+        # self.C = eqx.nn.Linear(hidden_size, hidden_size, use_bias=False, key=c_key)
+        # self.D = eqx.nn.Linear(input_size, hidden_size, use_bias=False, key=d_key)
 
         self.d_inp = input_size
         self.d_out = hidden_size
@@ -137,16 +137,16 @@ class RNNLayer(RTRLLayer):
             dynamics_fun = jax.jacrev(RNN.f, argnums=1)
             dynamics = dynamics_fun(self.cell, state, input)
         else:
-            jacobian_func = jax.jacrev(RNN.f, argnums=(0, 1))
-            inmediate_jacobian, dynamics = jacobian_func(self.cell, state, input)
+            jacobian_func = jax.jacrev(RNN.f, argnums=(0, 1, 2))
+            inmediate_jacobian, dynamics, layer_dynamics = jacobian_func(self.cell, state, input)
 
         # Project out
-        y_out = self.C(h_out) + self.D(input)
+        # y_out = self.C(h_out) + self.D(input)
 
-        return h_out, (inmediate_jacobian, dynamics), y_out
+        return h_out, (inmediate_jacobian, dynamics, layer_dynamics), h_out
 
     def f_bptt(self, state: State, input: Array) -> Tuple[State, Array]:
         h_out = self.cell.f(state, input)
-        y_out = self.C(h_out) + self.D(input)
+        # y_out = self.C(h_out) + self.D(input)
 
-        return h_out, y_out
+        return h_out, h_out
