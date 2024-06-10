@@ -22,6 +22,7 @@ import jax.tree_util as jtu
 
 from snapjax.algos import rtrl
 from snapjax.bptt import bptt
+from snapjax.cells.rnn import RNNStandard
 from snapjax.tests.utils import get_random_mask, get_random_sequence
 
 ATOL = 1e-12
@@ -32,7 +33,7 @@ def diag_matrix(W: Array):
     return jnp.diag(jnp.diag(W))
 
 
-class RNNDiag(RTRLCell):
+class RNNDiag(RNNStandard):
     W: Array
     diag: Array
     U: Array
@@ -58,7 +59,7 @@ class RNNDiag(RTRLCell):
         return mask
 
 
-class RNN(RTRLCell):
+class RNN(RNNStandard):
     W: Array
     U: Array
     input_size: int = eqx.field(static=True)

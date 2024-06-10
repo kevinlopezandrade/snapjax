@@ -16,13 +16,14 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
 
-from snapjax.algos import rtrl
+from snapjax.algos import rtrl, rtrl_exact
 from snapjax.bptt import bptt
 from snapjax.cells.utils import densify_jacobian_mask
 from snapjax.tests.utils import (
     get_random_mask,
     get_random_sequence,
     get_stacked_rnn,
+    get_stacked_rnn_exact,
     replace_rnn_with_diagonals,
 )
 
@@ -68,7 +69,7 @@ def test_no_snap_one_layer():
     assert passed
 
 
-def test_no_snap_mutliple_layers():
+def test_no_snap_multiple_layers_approx():
     """
     RTRL and BPTT where the stacked rnn contains multiple layers,
     should agree at least in the last layer.
@@ -90,6 +91,47 @@ def test_no_snap_mutliple_layers():
 
     acc_grads = acc_grads.layers[-1]
     acc_grads_bptt = acc_grads_bptt.layers[-1]
+
+    print("Comparing BPTT and RTRL with multiple layers")
+    passed = True
+    for (key_a, leaf_a), (key_b, leaf_b) in zip(
+        jtu.tree_leaves_with_path(acc_grads), jtu.tree_leaves_with_path(acc_grads_bptt)
+    ):
+        if jnp.allclose(leaf_a, leaf_b, atol=ATOL, rtol=RTOL):
+            print("Match", jtu.keystr(key_a))
+            print("\tMax difference: ", jnp.max(jnp.abs(leaf_a - leaf_b)))
+            print("\tMean difference: ", jnp.mean(jnp.abs(leaf_a - leaf_b)))
+        else:
+            print("Don't Match", jtu.keystr(key_a))
+            print("\tMax difference: ", jnp.max(jnp.abs(leaf_a - leaf_b)))
+            print("\tMean difference: ", jnp.mean(jnp.abs(leaf_a - leaf_b)))
+            passed = False
+
+    assert passed
+
+
+def test_no_snap_multiple_layers_exact():
+    """
+    RTRL and BPTT where the stacked rnn contains multiple layers,
+    should agree in all the layers.
+    """
+    T = 50
+    model = get_stacked_rnn_exact(4, 10, 10)
+    inputs = get_random_sequence(T, model)
+    targets = get_random_sequence(T, model)
+    mask = get_random_mask(T)
+
+    loss, acc_grads, _ = rtrl_exact(
+        model, inputs, targets, mask, use_scan=False, loss_func=masked_quadratic
+    )
+    loss_bptt, acc_grads_bptt, _ = bptt(
+        model, inputs, targets, mask, loss_func=masked_quadratic
+    )
+
+    assert jnp.allclose(loss, loss_bptt)
+
+    acc_grads = acc_grads.layers
+    acc_grads_bptt = acc_grads_bptt.layers
 
     print("Comparing BPTT and RTRL with multiple layers")
     passed = True

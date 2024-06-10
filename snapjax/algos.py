@@ -17,7 +17,7 @@ from snapjax.cells.base import (
     State,
     is_rtrl_cell,
 )
-from snapjax.cells.lru import Traces
+from snapjax.cells.lru import TracesLRU
 from snapjax.losses import l2
 from snapjax.sp_jacrev import (
     DenseProjection,
@@ -96,17 +96,11 @@ def make_zeros_grads(model: RTRLStacked):
 
 def make_perturbations(model: RTRLStacked):
     perturbations = []
-    cell_index = 0
     for layer in model.layers:
         if isinstance(layer, RTRLLayer):
-            cell = model.layers[cell_index].cell
-            zeros = jnp.zeros(cell.hidden_size)
-
-            if cell.complex_hidden_state:
-                zeros = zeros * 1j
-
+            cell = layer.cell
+            zeros = cell.init_perturbation()
             perturbations.append(zeros)
-            cell_index += 1
 
     return tuple(perturbations)
 
@@ -191,121 +185,19 @@ def update_cell_jacobians(
 
 
 @jax.jit
-def update_jacobians_rtrl(
-    jacobians_prev: RTRLStacked | Traces,  # Also known as the trace
-    inmediate_jacobians: List[Tuple[RTRLCell, Array] | Any],
-    theta_rtrl: RTRLStacked,
-    jacobian_mask: RTRLStacked | None = None,
-):
-    # Jax will do loop unrolling here, but number of layers is not that big
-    # so it will be fine.
-    jacobians = jacobians_prev
-    cell_index = 0
-    for layer in jacobians_prev.layers:
+def make_init_state(model: RTRLStacked) -> Stacked[State]:
+    states: Sequence[State] = []
+    for layer in model.layers:
         if isinstance(layer, RTRLLayer):
-            if not theta_rtrl.layers[cell_index].cell.custom_trace_update:
-                I_t, D_t = inmediate_jacobians[cell_index]
-                J_t_prev = jacobians.layers[cell_index].cell
-                if jacobian_mask:
-                    jacobian_cell_mask = jacobian_mask.layers[cell_index].cell
-                else:
-                    jacobian_cell_mask = None
+            cell = layer.cell
+            states.append(cell.init_state())
 
-                J_t = update_cell_jacobians(
-                    I_t,
-                    D_t,
-                    J_t_prev,
-                    jacobian_cell_mask=jacobian_cell_mask,
-                )
-
-                jacobians = eqx.tree_at(
-                    lambda model: model.layers[cell_index].cell, jacobians, J_t
-                )
-
-                cell_index += 1
-            else:
-                # Aux here contains every auxiliary data to update
-                # the traces.
-                aux = inmediate_jacobians[cell_index]
-                prev_trace = jacobians.layers[cell_index].cell
-                trace = theta_rtrl.layers[cell_index].cell.update_traces(
-                    prev_trace, aux
-                )
-
-                jacobians = eqx.tree_at(
-                    lambda model: model.layers[cell_index].cell, jacobians, trace
-                )
-
-                cell_index += 1
-
-    return jacobians
+    return tuple(states)
 
 
-@jax.jit
-def update_rtrl_cells_grads(
-    grads: RTRLStacked,
-    hidden_states_grads: List[Array],
-    jacobians: RTRLStacked | Traces,
-    theta_rtrl: RTRLStacked,
-):
-    def matmul_by_h(ht_grad: Array, jacobian: Array | BCOO):
-        if isinstance(jacobian, BCOO):
-            return (jacobian @ ht_grad.T).T
-        else:
-            return ht_grad @ jacobian
-
-    cell_index = 0
-    for layer in grads.layers:
-        if isinstance(layer, RTRLLayer):
-            ht_grad = hidden_states_grads[cell_index]
-            rtrl_cell_jac = jacobians.layers[cell_index].cell
-
-            if theta_rtrl.layers[cell_index].cell.custom_grad_update:
-                rtrl_cell_grads = theta_rtrl.layers[cell_index].cell.update_grads(
-                    ht_grad, rtrl_cell_jac
-                )
-            else:
-                rtrl_cell_grads = jtu.tree_map(
-                    lambda jacobian: matmul_by_h(ht_grad, jacobian),
-                    rtrl_cell_jac,
-                    is_leaf=lambda node: isinstance(node, BCOO),
-                )
-
-            grads = eqx.tree_at(
-                lambda grads: grads.layers[cell_index].cell,
-                grads,
-                rtrl_cell_grads,
-                is_leaf=lambda x: x is None,
-            )
-
-            cell_index += 1
-
-    return grads
+from snapjax.rtrl.base import RTRLApprox, RTRLExact
 
 
-@partial(jax.jit, static_argnums=7)
-def step_loss(
-    model_spatial_and_perturbations: Tuple[RTRLStacked, Stacked[Array]],
-    model_rtrl: RTRLStacked,
-    h_prev: Array,
-    x_t: Array,
-    y_t: Array,
-    mask: float,
-    jacobian_projection: RTRLStacked | None = None,
-    loss_func: Callable[[Array, Array, float], Array] = l2,
-):
-    model_spatial, perturbations = model_spatial_and_perturbations
-    model = eqx.combine(model_spatial, model_rtrl)
-    h_t, inmediate_jacobians, y_hat = model.f(
-        h_prev, x_t, perturbations, jacobian_projection
-    )
-
-    res = loss_func(y_t, y_hat, mask)
-
-    return res, (h_t, y_hat, inmediate_jacobians)
-
-
-# This should be a pure function.
 def forward_rtrl(
     model: RTRLStacked,
     jacobians_prev: RTRLStacked,
@@ -315,68 +207,19 @@ def forward_rtrl(
     mask: float = 1.0,
     jacobian_mask: RTRLStacked | None = None,
     jacobian_projection: RTRLStacked | None = None,
-    loss_func: Callable[[Array, Array, float], Array] = l2,
+    loss_func: Callable[[Array, Array, Array], Scalar] | None = None,
 ):
-    theta_rtrl, theta_spatial = eqx.partition(
+    algo = RTRLApprox(loss_func=loss_func, use_scan=True)
+    return algo.step(
         model,
-        lambda leaf: is_rtrl_cell(leaf),
-        is_leaf=is_rtrl_cell,
-    )
-    step_loss_and_grad = jax.value_and_grad(
-        jtu.Partial(step_loss, loss_func=loss_func), has_aux=True
-    )
-    perturbations = make_perturbations(theta_rtrl)
-
-    (loss_t, aux), (grads) = step_loss_and_grad(
-        (theta_spatial, perturbations),
-        theta_rtrl,
+        jacobians_prev,
         h_prev,
         input,
         target,
         mask,
-        jacobian_projection=jacobian_projection,
+        jacobian_mask,
+        jacobian_projection,
     )
-
-    h_t, y_hat, inmediate_jacobians = aux
-    spatial_grads, hidden_states_grads = grads
-
-    jacobians = update_jacobians_rtrl(
-        jacobians_prev,
-        inmediate_jacobians,
-        theta_rtrl,
-        jacobian_mask=jacobian_mask,
-    )
-
-    grads = update_rtrl_cells_grads(
-        spatial_grads, hidden_states_grads, jacobians, theta_rtrl
-    )
-
-    # Reshape the flattened gradients of the RTRL cells.
-    grads = jtu.tree_map(
-        lambda grad, mat: grad if isinstance(mat, BCOO) else grad.reshape(mat.shape),
-        grads,
-        model,
-        is_leaf=lambda node: isinstance(node, BCOO),
-    )
-
-    h_t = cast(Stacked[State], h_t)
-    grads = cast(RTRLStacked, grads)
-    jacobians = cast(RTRLStacked, jacobians)
-    loss_t = cast(float, loss_t)
-    y_hat = cast(Array, y_hat)
-
-    return h_t, grads, jacobians, loss_t, y_hat
-
-
-@jax.jit
-def make_init_state(model: RTRLStacked) -> Stacked[State]:
-    states: Sequence[State] = []
-    for layer in model.layers:
-        if isinstance(layer, RTRLLayer):
-            cell = layer.cell
-            states.append(cell.init_state())
-
-    return tuple(states)
 
 
 def rtrl(
@@ -390,64 +233,20 @@ def rtrl(
     use_scan: bool = True,
     mean: bool = False,
 ):
-    if mean:
-        factor = mask.sum()
-        _loss_func = lambda y, y_hat, mask: (1 / factor) * loss_func(y, y_hat, mask)
-    else:
-        _loss_func = loss_func
+    algo = RTRLApprox(loss_func=loss_func, use_scan=use_scan)
+    return algo.rtrl(model, inputs, targets, mask, jacobian_mask, jacobian_projection)
 
-    def forward_repack(carry, data):
-        input, target, mask = data
-        h_prev, acc_grads, jacobians_prev, acc_loss = carry
 
-        out = forward_rtrl(
-            model,
-            jacobians_prev,
-            h_prev,
-            input,
-            target,
-            mask,
-            jacobian_mask=jacobian_mask,
-            jacobian_projection=jacobian_projection,
-            loss_func=_loss_func,
-        )
-        h_t, grads, jacobians_t, loss_t, y_hat = out
-        acc_loss = acc_loss + loss_t
-        acc_grads = jtu.tree_map(
-            lambda acc_grads, grads: acc_grads + grads, acc_grads, grads
-        )
-
-        return (h_t, acc_grads, jacobians_t, acc_loss), y_hat
-
-    h_init: Sequence[State] = make_init_state(model)
-    acc_grads: RTRLStacked = make_zeros_grads(model)
-
-    if jacobian_projection:
-        zero_jacobians = make_zeros_jacobians_sp(jacobian_projection)
-    else:
-        zero_jacobians = make_zeros_jacobians(model)
-
-    acc_loss = 0.0
-
-    if use_scan:
-        carry_T, y_hats = jax.lax.scan(
-            forward_repack,
-            init=(h_init, acc_grads, zero_jacobians, acc_loss),
-            xs=(inputs, targets, mask),
-        )
-    else:
-        carry = (h_init, acc_grads, zero_jacobians, acc_loss)
-        T = inputs.shape[0]
-        y_hats = [None] * T
-        for i in range(inputs.shape[0]):
-            carry, y_hat = forward_repack(carry, (inputs[i], targets[i], mask[i]))
-            y_hats[i] = y_hat
-
-        y_hats = jnp.stack(y_hats)
-        carry_T = carry
-
-    h_T, acc_grads, jacobians_T, acc_loss = carry_T
-
-    acc_loss = cast(float, acc_loss)
-    y_hats = cast(Array, y_hats)
-    return acc_loss, acc_grads, y_hats
+def rtrl_exact(
+    model: RTRLStacked,
+    inputs: Array,
+    targets: Array,
+    mask: Array,
+    jacobian_mask: RTRLStacked | None = None,
+    jacobian_projection: RTRLStacked | None = None,
+    loss_func: Callable[[Array, Array, float], Scalar] = l2,
+    use_scan: bool = True,
+    mean: bool = False,
+):
+    algo = RTRLExact(loss_func=loss_func, use_scan=use_scan)
+    return algo.rtrl(model, inputs, targets, mask, jacobian_mask, jacobian_projection)

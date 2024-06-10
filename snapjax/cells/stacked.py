@@ -3,7 +3,7 @@ from typing import List, Self, Tuple
 import equinox as eqx
 from jaxtyping import Array
 
-from snapjax.cells.base import Jacobians, Layer, RTRLLayer, RTRLStacked, Stacked, State
+from snapjax.cells.base import Layer, RTRLLayer, RTRLStacked, Stacked, State, Traces
 
 
 class StackedCell(RTRLStacked):
@@ -20,7 +20,7 @@ class StackedCell(RTRLStacked):
         self.num_layers = len(layers)
         self.sparse = sparse
 
-    def f(
+    def f_rtrl(
         self,
         state: Stacked[State],
         input: Array,
@@ -35,12 +35,12 @@ class StackedCell(RTRLStacked):
                 return None
 
         new_state: List[State] = []
-        inmediate_jacobians: List[Jacobians] = []
+        inmediate_jacobians: List[Traces] = []
         out = input
         cell_index = 0
         for layer in self.layers:
             if isinstance(layer, RTRLLayer):
-                layer_state, jacobians, out = layer.f(
+                layer_state, jacobians, out = layer.f_rtrl(
                     state[cell_index],
                     out,
                     perturbations[cell_index],
@@ -87,7 +87,7 @@ class SingleCell(RTRLStacked):
     def layer(self):
         return self.layers[0]
 
-    def f(
+    def f_rtrl(
         self,
         state: Stacked[State],
         input: Array,
@@ -104,7 +104,7 @@ class SingleCell(RTRLStacked):
 
         assert isinstance(self.layers[0], RTRLLayer)
 
-        new_state, jacobians, out = self.layers[0].f(
+        new_state, jacobians, out = self.layers[0].f_rtrl(
             state[0], input, perturbations[0], _get_projection_cell()
         )
 
