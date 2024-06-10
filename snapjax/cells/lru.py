@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from jaxtyping import Array, PRNGKeyArray
 
-from snapjax.cells.base import Jacobians, RTRLCell, RTRLLayer, State
+from snapjax.cells.base import RTRLCell, RTRLLayer, State, Traces
 
 """
 This implementation is taken from:
@@ -36,7 +36,7 @@ def gamma_log_init(key, lamb):
     return jnp.log(jnp.sqrt(1 - jnp.abs(diag_lambda) ** 2))
 
 
-class Traces(eqx.Module):
+class TracesLRU(eqx.Module):
     gamma_trace: Array
     lambda_trace: Array
     B_trace: Array
@@ -118,7 +118,7 @@ class LRU(RTRLCell):
 
         return h_out
 
-    def state_and_aux(self, state: State, input: Array):
+    def f_and_payload(self, state: State, input: Array):
         """
         Returns the value and the data necessary for every param to be updated later
         according to NicolasZucchet paper.
@@ -129,7 +129,10 @@ class LRU(RTRLCell):
     def init_state(self) -> State:
         return 1j * jnp.zeros(shape=(self.hidden_size,))
 
-    def make_zero_traces(self) -> Traces:
+    def init_perturbation(self) -> State:
+        return 1j * jnp.zeros(shape=(self.hidden_size,))
+
+    def init_traces(self) -> TracesLRU:
         """
         The traces for gamma, lambda, B
         """
@@ -137,13 +140,17 @@ class LRU(RTRLCell):
         lambda_trace = jnp.zeros(shape=(self.hidden_size,)) * 1j
         b_trace = jnp.zeros(shape=(self.hidden_size, self.input_size)) * 1j
 
-        return Traces(
+        return TracesLRU(
             gamma_trace=gamma_trace, lambda_trace=lambda_trace, B_trace=b_trace
         )
 
-    def update_traces(self, prev_trace: Traces, aux: Dict[str, Any]):
-        h_prev = aux["h_prev"]
-        input = aux["input"]
+    def update_traces(
+        self, prev_traces: Traces, payloads: Dict[str, Any], traces_mask=None
+    ):
+        prev_trace = prev_traces[0]
+        payload = payloads[0]
+        h_prev = payload["h_prev"]
+        input = payload["input"]
 
         B = self.B_re + 1j * self.B_im
         gamma = jnp.exp(self.gamma_log)
@@ -153,11 +160,14 @@ class LRU(RTRLCell):
         gamma_trace = lambda_diag * prev_trace.gamma_trace + B @ input
         B_trace = jnp.diag(lambda_diag) @ prev_trace.B_trace + jnp.outer(gamma, input)
 
-        return Traces(
+        traces = TracesLRU(
             gamma_trace=gamma_trace, lambda_trace=lambda_trace, B_trace=B_trace
         )
 
-    def update_grads(self, hidden_state_grad: Array, traces: Traces):
+        # Needs to return in a tuple.
+        return (traces,)
+
+    def compute_grads(self, hidden_state_grad: Array, traces: TracesLRU):
         """
         For every param of this cell updates its gradients.
         """
@@ -222,21 +232,21 @@ class LRULayer(RTRLLayer):
             normalization=jnp.sqrt(self.d_inp),
         )
 
-    def f(
+    def f_rtrl(
         self,
         state: State,
         input: Array,
         perturbation: Array,
         sp_projection_cell: RTRLCell | None = None,
-    ) -> Tuple[State, Jacobians, Array]:
+    ) -> Tuple[State, Traces, Array]:
         C = self.C_re + 1j * self.C_im
 
-        h_out, aux = self.cell.state_and_aux(state, input)
+        h_out, payload = self.cell.f_and_payload(state, input)
         h_out = h_out + perturbation
 
         y = (C @ h_out).real + self.D @ input
 
-        return h_out, aux, y
+        return h_out, payload, y
 
     def f_bptt(
         self,

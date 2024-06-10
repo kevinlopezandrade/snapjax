@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from jax.experimental.sparse import BCOO
 
-from snapjax.sp_jacrev import make_jacobian_projection, sp_jacrev
+from snapjax.sp_jacrev import SparseMask, make_jacobian_projection, new_sp_jacrev
 
 
 def test_matrix_jacobian_sparse():
@@ -23,10 +23,11 @@ def test_matrix_jacobian_sparse():
     jacobian = jax.jacobian(f)(W, h)
 
     sp = BCOO.fromdense((jnp.abs(jacobian) > 0.0).astype(jnp.float32).reshape(4, -1))
+    sp = SparseMask(sp.indices, sp.shape, jacobian.shape)
     projection = make_jacobian_projection(sp)
 
     partial = jax.tree_util.Partial(f, h=h)
-    sp_jacobian_func = sp_jacrev(partial, projection)
+    sp_jacobian_func = new_sp_jacrev(partial, projection)
     sp_jacobian = sp_jacobian_func(W)
     # print(sp_jacobian.todense().reshape(4, 4, 4))
 

@@ -10,7 +10,7 @@ from jaxtyping import Array
 from snapjax.cells.base import RTRLStacked, is_rtrl_cell
 from snapjax.cells.continous_rnn import SparseFiringRateRNN
 from snapjax.cells.initializers import glorot_weights, normal_channels
-from snapjax.cells.readout import LinearTanhReadout
+from snapjax.cells.readout import IdentityLayer, LinearTanhReadout
 from snapjax.cells.rnn import RNN, RNNLayer
 from snapjax.cells.stacked import StackedCell
 from snapjax.sp_jacrev import DenseProjection, Mask, SparseMask, SparseProjection
@@ -37,6 +37,35 @@ def get_stacked_rnn(
     keys = jrandom.split(jrandom.PRNGKey(key), num_layers)
     for i in range(num_layers):
         layer = RNNLayer(hidden_size=hidden_size, input_size=input_size, key=keys[i])
+        layers.append(layer)
+
+    theta = StackedCell(layers, sparse=sparse)
+
+    return theta
+
+
+def get_stacked_rnn_exact(
+    num_layers: int,
+    hidden_size: int,
+    input_size: int,
+    seed: int | None = None,
+    sparse: bool = False,
+):
+    if seed is None:
+        key = int(time.time() * 1000)
+    else:
+        key = seed
+
+    layer_args = {
+        "hidden_size": hidden_size,
+        "input_size": input_size,
+    }
+
+    layers = []
+    keys = jrandom.split(jrandom.PRNGKey(key), num_layers)
+    for i in range(num_layers):
+        cell = RNN(hidden_size=hidden_size, input_size=input_size, key=keys[i])
+        layer = IdentityLayer(cell)
         layers.append(layer)
 
     theta = StackedCell(layers, sparse=sparse)

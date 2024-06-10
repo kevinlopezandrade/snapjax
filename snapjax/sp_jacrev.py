@@ -8,11 +8,10 @@ import jax.tree_util as jtu
 import networkx
 import numpy as onp
 import scipy.sparse as ssparse
-from jax._src.api import _vjp
+from jax._src.api import _std_basis, _vjp
 from jax._src.api_util import argnums_partial
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.ad import flatten_fun_for_sparse_ad
-from jax.experimental.sparse.bcoo import BCOO
 from jax.extend.linear_util import wrap_init
 from jaxtyping import Array, PyTree
 
@@ -177,7 +176,7 @@ def flatten_function(fun, in_tree):
 
     def flat(*args):
         theta = jtu.tree_unflatten(in_tree, args)
-        return fun(theta)
+        return fun(*theta)
 
     return flat
 
@@ -230,6 +229,67 @@ def tree_vjp(fun, primal_tree: PyTree) -> PyTree:
     return jtu.tree_unflatten(in_tree, primals_vjp)
 
 
+def new_tree_vjp(
+    fun, primal_tree: PyTree, V: PyTree, transpose: bool = False
+) -> PyTree:
+    """
+    Takes a function 'fun' which has only one positional
+    argument, which is a PyTree, and returns a PyTree
+    with the same structure that for each leafs contains
+    the pullback 'vjp' evaluated at the corresponding leaf.
+
+    Args:
+        fun: Function that takes only one positional
+            argument which is a PyTree.
+        primal_tree: PyTree with the primal values for each
+            vjp in the returned PyTree.
+    """
+    primals, in_tree = jtu.tree_flatten(primal_tree, is_leaf=is_sparse)
+    flat_f = flatten_function(fun, in_tree)
+
+    _V, _ = jtu.tree_flatten(
+        V,
+        is_leaf=lambda x: x is None
+        or isinstance(x, (SparseProjection, DenseProjection)),
+    )
+
+    N = len(primals)
+    primals_vjp = [None] * N
+    for i in range(N):
+        f_partial, dyn_args = argnums_partial(
+            wrap_init(flat_f),
+            dyn_argnums=i,
+            args=primals,
+            require_static_args_hashable=False,
+        )
+
+        if is_sparse(primals[i]):
+            # Here I must flatten again since its a sparse array.
+            f_to_reflaten = f_partial.call_wrapped
+            fun_reflat, argnums_flat, args_flat, postprocess_gradients = (
+                flatten_fun_for_sparse_ad(f_to_reflaten, 0, dyn_args)
+            )
+            # Repartial again for the vjp
+            f_partial, dyn_args = argnums_partial(
+                wrap_init(fun_reflat),
+                dyn_argnums=0,
+                args=args_flat,
+                require_static_args_hashable=False,
+            )
+
+        out, f_partial_vjp = _vjp(
+            f_partial, *dyn_args
+        )  # dyn_args must only contain just one arg
+        if _V[i] is not None:
+            primals_vjp[i] = apply_sp_pullback(
+                f_partial_vjp, _V[i], transpose=transpose
+            )
+        else:
+            primals_vjp[i] = jax.vmap(f_partial_vjp)(_std_basis(out))[0]
+
+    return jtu.tree_unflatten(in_tree, primals_vjp)
+
+
 def make_jacobian_projection(sparse_patterns: _T) -> _T:
     """
     Given a PyTree with sparse_patterns in BCOO format, it computes per leaf
@@ -239,25 +299,16 @@ def make_jacobian_projection(sparse_patterns: _T) -> _T:
     a SparseProjection needed for the computation of sparse jacobians.
     """
 
-    def _projection_matrix(sparsity: SparseMask | BCOO):
-        if isinstance(sparsity, BCOO):
-            sparsity_scipy = ssparse.coo_matrix(
-                (sparsity.data, sparsity.indices.T), shape=sparsity.shape
-            )
-        else:
-            sparsity_scipy = ssparse.coo_matrix(
-                (jnp.ones(sparsity.indices.shape[0]), sparsity.indices.T),
-                shape=sparsity.jacobian_shape,
-            )
+    def _projection_matrix(sparsity: SparseMask):
+        sparsity_scipy = ssparse.coo_matrix(
+            (jnp.ones(sparsity.indices.shape[0]), sparsity.indices.T),
+            shape=sparsity.jacobian_shape,
+        )
 
         connectivity = _output_connectivity_from_sparsity(sparsity_scipy)
-        output_coloring, ncolors = _greedy_color(connectivity, "largest_first")
+        output_coloring, ncolors = _greedy_color(connectivity, "DSATUR")
         output_coloring = jnp.asarray(output_coloring)
-        assert (
-            output_coloring.size == sparsity.shape[0]
-            if isinstance(sparsity, BCOO)
-            else sparsity.jacobian_shape[0]
-        )
+        assert output_coloring.size == sparsity.jacobian_shape[0]
 
         projection_matrix = (
             jnp.arange(ncolors)[:, jnp.newaxis] == output_coloring[jnp.newaxis, :]
@@ -274,12 +325,12 @@ def make_jacobian_projection(sparse_patterns: _T) -> _T:
             indices_csr,
             indices_csc,
             sparsity_scipy.nnz,
-            sparsity.shape if isinstance(sparsity, BCOO) else sparsity.jacobian_shape,
+            sparsity.jacobian_shape,
         )
         return SparseProjection(projection_matrix, output_coloring, sparsity_structure)
 
-    def _construct_projection(node: SparseMask | Mask | BCOO | Any):
-        if isinstance(node, (SparseMask, BCOO)):
+    def _construct_projection(node: SparseMask | Mask | Any):
+        if isinstance(node, SparseMask):
             return _projection_matrix(node)
         elif isinstance(node, Mask):
             return DenseProjection(
@@ -292,7 +343,7 @@ def make_jacobian_projection(sparse_patterns: _T) -> _T:
     res = jtu.tree_map(
         lambda node: _construct_projection(node),
         sparse_patterns,
-        is_leaf=lambda node: isinstance(node, (jsparse.BCOO, SparseMask, Mask)),
+        is_leaf=lambda node: isinstance(node, (SparseMask, Mask)),
     )
 
     return res
@@ -310,15 +361,13 @@ def apply_sp_pullback(
         sp: Projection matrix to vmap over.
     """
     if isinstance(sp, DenseProjection):
-        return standard_jacobian(
-            jax.vmap(lambda ct: pullback(ct)[0])(sp.projection_matrix)
-        )
+        return standard_jacobian(jax.vmap(pullback)(sp.projection_matrix)[0])
 
     # NOTE: When you evaluate pullback to a cotangent vector even if the
     # jacobian jax gives if you use jax.jacobian is of 3 or more dimensions
     # what is actually doing in pullback is the v @ jacobian.reshape(output_dim, -1)
     # as it should be doing, but then it gives you a reshaped version.
-    compressed_jacobian = jax.vmap(lambda ct: pullback(ct)[0])(sp.projection_matrix)
+    compressed_jacobian = jax.vmap(pullback)(sp.projection_matrix)[0]
     # Reshape is needed since the sparse patterns are only 2d dimensional. But the jvp
     # returns 3d arrays.
     compressed_jacobian = standard_jacobian(compressed_jacobian)
@@ -355,5 +404,43 @@ def sp_jacrev(
         )
 
         return tree_sp_jacobians
+
+    return _sp_jacfun
+
+
+def new_sp_jacrev(
+    fun: Callable[[_T], Array],
+    V: _T,
+    transpose: bool = False,
+    argnums: int | Sequence[int] = 0,
+) -> Callable[[_T], Array]:
+    """
+    Retruns a function that will compute the jacobian of fun w.r.t
+    to its first positional argument, making use of the sparsity
+    structure of V. Extra arguments can be specified but the V will only
+    be applied to the first one.
+
+    Args:
+        fun: Function to use for computing the sparse jacobian.
+        V: PyTree with the same structure as the input pytree
+            of fun. Each leaf of the PyTree must be a SparseProjection
+            leaf.
+    """
+
+    def _sp_jacfun(*args):
+        f_partial, dyn_args = argnums_partial(
+            wrap_init(fun), argnums, args, require_static_args_hashable=False
+        )
+
+        _V = (V, *(None for _ in range(1, len(dyn_args))))
+
+        tree_jacobians = new_tree_vjp(
+            f_partial.call_wrapped, dyn_args, _V, transpose=transpose
+        )
+
+        if len(_V) == 1:
+            return tree_jacobians[0]
+        else:
+            return tree_jacobians
 
     return _sp_jacfun

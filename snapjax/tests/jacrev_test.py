@@ -5,7 +5,7 @@ import jax.tree_util as jtu
 import numpy as onp
 from jax.experimental.sparse.bcoo import BCOO
 
-from snapjax.sp_jacrev import SparseMask, make_jacobian_projection, sp_jacrev
+from snapjax.sp_jacrev import SparseMask, make_jacobian_projection, new_sp_jacrev
 
 _SIZE = 50
 
@@ -18,7 +18,7 @@ _SIZE = 50
 class sparsejac:
     @staticmethod
     def jacrev(fn, sparsity):
-        jac_fun = sp_jacrev(fn, make_jacobian_projection(sparsity), transpose=True)
+        jac_fun = new_sp_jacrev(fn, make_jacobian_projection(sparsity), transpose=True)
 
         def f(x):
             tree = jac_fun(x)

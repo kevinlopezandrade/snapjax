@@ -7,12 +7,13 @@ import jax.tree_util as jtu
 from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray
 
-from snapjax.cells.base import RTRLCell, State
+from snapjax.cells.base import State
+from snapjax.cells.rnn import RNNStandard
 from snapjax.cells.utils import snap_n_mask, snap_n_mask_bcoo
 from snapjax.sp_jacrev import Mask
 
 
-class FiringRateRNN(RTRLCell):
+class FiringRateRNN(RNNStandard):
     W: Array  # mxm
     U: Array  # mxd
     dt: float = eqx.field(static=True)
@@ -53,7 +54,13 @@ def mask_matrix(W: Array, mask: Array) -> BCOO:
     return mat
 
 
-class SparseFiringRateRNN(RTRLCell):
+def sparsify_matrix(W: Array, sparsity_level: float, key: PRNGKeyArray):
+    mask = jrandom.bernoulli(key, p=(1 - sparsity_level), shape=W.shape)
+
+    return mask_matrix(W, mask=mask)
+
+
+class SparseFiringRateRNN(RNNStandard):
     W: BCOO
     U: Array
     dt: float = eqx.field(static=True)
@@ -85,23 +92,6 @@ class SparseFiringRateRNN(RTRLCell):
         h_new = (1 - self.dt) * h + self.dt * h_new
 
         return h_new
-
-    def make_zero_jacobians(self) -> Self:
-        def _get_zero_jacobian(leaf: Array | BCOO):
-            """
-            The jacobians are still dense arrays.
-            """
-            if isinstance(leaf, BCOO):
-                return jnp.zeros((cell.hidden_size, leaf.nse))
-            else:
-                return jnp.zeros((cell.hidden_size, *leaf.shape))
-
-        zero_jacobians = jtu.tree_map(
-            _get_zero_jacobian,
-            cell,
-            is_leaf=lambda node: isinstance(node, BCOO),
-        )
-        return zero_jacobians
 
     def make_snap_n_mask(self, n: int) -> Self:
         """
