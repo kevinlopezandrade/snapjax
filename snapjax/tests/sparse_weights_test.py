@@ -10,7 +10,7 @@ from snapjax.bptt import bptt
 from snapjax.cells.continous_rnn import sparsify_matrix
 from snapjax.cells.initializers import normal_channels, normal_weights
 from snapjax.cells.readout import IdentityLayer, LinearReadoutLayer
-from snapjax.cells.rnn import RNNTanh
+from snapjax.cells.rnn import RNNGeneral
 from snapjax.cells.stacked import StackedCell
 from snapjax.cells.utils import densify_jacobian_mask, make_dense_identity_mask
 from snapjax.losses import masked_quadratic
@@ -50,7 +50,7 @@ def make_sparse_rnn_layer(
     if sparse_u:
         U = sparsify_matrix(U, key=u_sp, sparsity_level=sparsity_level)
 
-    return RNNTanh(W=W, U=U)
+    return RNNGeneral(W=W, U=U)
 
 
 def test_rtrl_bptt_sparse_weights():
