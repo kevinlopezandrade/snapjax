@@ -1,4 +1,4 @@
-from typing import Iterable, List, NamedTuple, Self, Sequence, Tuple
+from typing import Callable, Iterable, List, NamedTuple, Self, Sequence, Tuple
 
 import equinox as eqx
 import jax
@@ -260,25 +260,33 @@ class RNNLayer(RTRLLayer):
         return h_out, y_out
 
 
-class RNNTanh(RNNStandard):
+class RNNGeneral(RNNStandard):
     W: Array | BCOO
     U: Array | BCOO
     b: Array | BCOO
     input_size: int = eqx.field(static=True)
     hidden_size: int = eqx.field(static=True)
+    activation_function: Callable = eqx.field(static=True)
 
-    def __init__(self, W: Array | BCOO, U: Array | BCOO, b: Array | BCOO | None = None):
+    def __init__(
+        self,
+        W: Array | BCOO,
+        U: Array | BCOO,
+        b: Array | BCOO | None = None,
+        activation_function=jax.nn.tanh,
+    ):
         self.W = W
         self.U = U
         self.b = b
+        self.activation_function = activation_function
 
         self.input_size = U.shape[1]
         self.hidden_size = W.shape[0]
 
     def f(self, state: State, input: Array) -> Array:
         if self.b:
-            h_new = jnp.tanh(self.W @ state + self.U @ input + self.b)
+            h_new = self.W @ self.activation_function(state) + self.U @ input + self.b
         else:
-            h_new = jnp.tanh(self.W @ state + self.U @ input)
+            h_new = self.W @ self.activation_function(state) + self.U @ input
 
         return h_new
