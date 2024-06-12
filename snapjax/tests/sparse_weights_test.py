@@ -7,9 +7,12 @@ from jaxtyping import PRNGKeyArray
 
 from snapjax.algos import rtrl, rtrl_exact
 from snapjax.bptt import bptt
-from snapjax.cells.continous_rnn import sparsify_matrix
-from snapjax.cells.initializers import normal_channels, normal_weights
-from snapjax.cells.readout import IdentityLayer, LinearReadoutLayer
+from snapjax.cells.initializers import (
+    normal_channels,
+    normal_weights,
+    sparse_lecun_matrix,
+)
+from snapjax.cells.readout import IdentityLayer, LinearTanhReadout
 from snapjax.cells.rnn import RNNGeneral
 from snapjax.cells.stacked import StackedCell
 from snapjax.cells.utils import densify_jacobian_mask, make_dense_identity_mask
@@ -37,18 +40,21 @@ def make_sparse_rnn_layer(
     sparse_u: bool = True,
     g: float = 0.9,
 ):
-    W_key, U_key, w_sp, u_sp = jrandom.split(key, 4)
-    W = normal_weights(W_key, h_dim, g)
+    W_key, U_key = jrandom.split(key, 2)
+    if sparsity_level > 0.5:
+        W = sparse_lecun_matrix(W_key, N=h_dim, sparsity_level=sparsity_level)
 
-    if inp_dim != h_dim:
-        U = normal_channels(U_key, h_dim, inp_dim)
+        if inp_dim != h_dim:
+            U = normal_channels(U_key, h_dim, inp_dim)
+        else:
+            U = sparse_lecun_matrix(U_key, N=h_dim, sparsity_level=sparsity_level)
     else:
-        U = normal_weights(U_key, h_dim, g)
+        W = normal_weights(W_key, N=h_dim, g=g)
 
-    W = sparsify_matrix(W, key=w_sp, sparsity_level=sparsity_level)
-
-    if sparse_u:
-        U = sparsify_matrix(U, key=u_sp, sparsity_level=sparsity_level)
+        if inp_dim != h_dim:
+            U = normal_channels(U_key, h_dim, inp_dim)
+        else:
+            U = normal_weights(U_key, N=h_dim, g=g)
 
     return RNNGeneral(W=W, U=U)
 
@@ -242,7 +248,7 @@ def test_multilayer_sparse():
         inp_dim=H, h_dim=H, key=last_layer_key, sparsity_level=0.6
     )
     C = normal_weights(key=readout_key, N=H, g=0.9)
-    output_layer = LinearReadoutLayer(cell=output_layer, C=C)
+    output_layer = LinearTanhReadout(cell=output_layer, C=C)
     layers.append(output_layer)
 
     model = StackedCell(layers, sparse=True)

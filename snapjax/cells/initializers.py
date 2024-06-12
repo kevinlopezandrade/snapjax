@@ -3,6 +3,7 @@ from typing import List
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
+from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray, Scalar
 
 
@@ -71,3 +72,29 @@ def glorot_weights(key: PRNGKeyArray, out_dim: int, inp_dim: int):
     lim = 1 / jnp.sqrt(inp_dim)
     weights = jrandom.uniform(key, shape=(out_dim, inp_dim), minval=-lim, maxval=lim)
     return weights
+
+
+def sparse_lecun_matrix(key: PRNGKeyArray, N: int, sparsity_level: float):
+    """
+    Samples a a random matrix where every row is sampled from a different
+    normal distribution so that the ouptut standard deviation is one at
+    every output neuron, taking into the effective number of inputs given
+    by the sparsity pattern. So basically Lecun row by row, where every row
+    has different number of 'effective' inputs.
+    """
+
+    def _init_row(mask: Array, key: PRNGKeyArray):
+        m = jnp.sum(mask)
+        variance = 1 / m
+        weights = jrandom.normal(key, shape=mask.shape)
+        weights = jnp.sqrt(variance) * weights
+
+        return weights * mask
+
+    mask_key, weights_key = jrandom.split(key)
+    mask = jrandom.bernoulli(mask_key, p=(1 - sparsity_level), shape=(N, N))
+
+    rows_keys = jrandom.split(weights_key, N)
+    W = jax.vmap(_init_row)(mask, rows_keys)
+
+    return BCOO.fromdense(W)
