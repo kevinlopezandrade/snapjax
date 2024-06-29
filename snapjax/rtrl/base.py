@@ -23,7 +23,7 @@ from snapjax.losses import l2
 from snapjax.sp_jacrev import DenseProjection, SparseProjection, standard_jacobian
 
 
-@partial(jax.jit, static_argnums=8)
+@partial(jax.jit, static_argnums=(9, 10))
 def step_loss(
     model_spatial: RTRLStacked,
     perturbations: Stacked[Array],
@@ -33,7 +33,9 @@ def step_loss(
     y_t: Array,
     mask: float,
     jacobian_projection: RTRLStacked | None = None,
+    model_prev: RTRLStacked | None = None,
     loss_func: Callable[[Array, Array, float], Array] = l2,
+    regularizer: Callable[[RTRLStacked, RTRLStacked], float] | None = None,
 ):
     model = eqx.combine(model_spatial, model_rtrl)
     h_t, inmediate_jacobians, y_hat = model.f_rtrl(
@@ -41,6 +43,8 @@ def step_loss(
     )
 
     res = loss_func(y_t, y_hat, mask)
+    if regularizer and model_prev:
+        res = res + regularizer(model, model_prev)
 
     return res, (h_t, y_hat, inmediate_jacobians)
 
@@ -65,12 +69,17 @@ def _sparse_jacobian(leaf: SparseProjection | DenseProjection):
 class RTRL(eqx.Module):
     loss_func: Callable = eqx.field(static=True)
     use_scan: bool = eqx.field(static=True)
+    regularizer: Callable = eqx.field(static=True)
 
     def __init__(
-        self, loss_func: Callable[[Array, Array, Array], Scalar], use_scan: bool = True
+        self,
+        loss_func: Callable[[Array, Array, Array], Scalar],
+        use_scan: bool = True,
+        regularizer: Callable | None = None,
     ):
         self.loss_func = loss_func
         self.use_scan = use_scan
+        self.regularizer = regularizer
 
     @jax.jit
     def step(
@@ -83,6 +92,7 @@ class RTRL(eqx.Module):
         mask: float = 1.0,
         jacobian_mask: RTRLStacked | None = None,
         jacobian_projection: RTRLStacked | None = None,
+        model_prev: RTRLStacked | None = None,
     ):
         theta_rtrl, theta_spatial = eqx.partition(
             model,
@@ -90,7 +100,9 @@ class RTRL(eqx.Module):
             is_leaf=is_rtrl_cell,
         )
         step_loss_and_grad = jax.value_and_grad(
-            jtu.Partial(step_loss, loss_func=self.loss_func),
+            jtu.Partial(
+                step_loss, loss_func=self.loss_func, regularizer=self.regularizer
+            ),
             argnums=(0, 1),
             has_aux=True,
         )
@@ -105,6 +117,7 @@ class RTRL(eqx.Module):
             target,
             mask,
             jacobian_projection=jacobian_projection,
+            model_prev=model_prev,
         )
 
         h_t, y_hat, inmediate_jacobians = aux
