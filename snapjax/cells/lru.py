@@ -101,6 +101,7 @@ class LRU(RTRLCell):
         )
 
     @staticmethod
+    @jax.jit
     def get_diag_lambda(nu_log, theta_log):
         nu = jnp.exp(nu_log)
         theta = jnp.exp(theta_log)
