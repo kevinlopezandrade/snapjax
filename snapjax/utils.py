@@ -1,3 +1,4 @@
+import math
 from functools import partial
 from typing import Any, Dict, Tuple
 
@@ -53,13 +54,20 @@ def sparse_aware_update(model: RTRLStacked, updates: RTRLStacked):
     return model
 
 
-@partial(jax.jit, static_argnums=3)
+@partial(jax.jit, static_argnums=(3, 4))
 def apply_update(
-    model: RTRLStacked, grads: RTRLStacked, state: Any, optimizer: Any
+    model: RTRLStacked,
+    grads: RTRLStacked,
+    state: Any,
+    optimizer: Any,
+    return_updates: bool = False,
 ) -> Tuple[RTRLStacked, Any]:
     updates, state = optimizer.update(grads, state)
     model = sparse_aware_update(model, updates)
-    return model, state
+    if return_updates:
+        return model, state, updates
+    else:
+        return model, state
 
 
 @partial(jax.jit, static_argnames=["optimizer"])
@@ -81,6 +89,57 @@ def sparse_aware_init(model: RTRLStacked, optimizer: GradientTransformation):
     )
 
     return optim_state
+
+
+class Welford:
+    """Implements Welford's algorithm for computing a running mean
+    and standard deviation as described at:
+        http://www.johndcook.com/standard_deviation.html
+    can take single values or iterables
+    Properties:
+        mean    - returns the mean
+        std     - returns the std
+    Usage:
+        >>> foo = Welford()
+        >>> foo(range(100))
+        >>> foo
+        <Welford: 49.5 +- 29.0114919759>
+        >>> foo([1]*1000)
+        >>> foo
+        <Welford: 5.40909090909 +- 16.4437417146>
+        >>> foo.mean
+        5.409090909090906
+        >>> foo.std
+        16.44374171455467
+        >>> foo.meanfull
+        (5.409090909090906, 0.4957974674244838)
+    """
+
+    def __init__(self, shape):
+        self.k = 0
+        self.M = jnp.zeros(shape)
+        self.S = jnp.zeros(shape)
+
+    def update(self, x):
+        if x is None:
+            return
+        self.k += 1
+        newM = self.M + (x - self.M) * (1.0 / self.k)
+        newS = self.S + (x - self.M) * (x - newM)
+        self.M, self.S = newM, newS
+
+    def __call__(self, x):
+        self.update(x)
+
+    @property
+    def mean(self):
+        return self.M
+
+    @property
+    def std(self):
+        if self.k == 1:
+            return 0
+        return jnp.sqrt(self.S / (self.k - 1))
 
 
 def train(
