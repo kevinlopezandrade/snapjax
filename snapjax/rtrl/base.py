@@ -70,16 +70,19 @@ class RTRL(eqx.Module):
     loss_func: Callable = eqx.field(static=True)
     use_scan: bool = eqx.field(static=True)
     regularizer: Callable = eqx.field(static=True)
+    return_hidden_state_grads: bool = eqx.field(static=True)
 
     def __init__(
         self,
         loss_func: Callable[[Array, Array, Array], Scalar],
         use_scan: bool = True,
         regularizer: Callable | None = None,
+        return_hidden_state_grads: bool = False,
     ):
         self.loss_func = loss_func
         self.use_scan = use_scan
         self.regularizer = regularizer
+        self.return_hidden_state_grads = return_hidden_state_grads
 
     @jax.jit
     def step(
@@ -150,7 +153,10 @@ class RTRL(eqx.Module):
         loss_t = cast(float, loss_t)
         y_hat = cast(Array, y_hat)
 
-        return h_t, grads, jacobians, loss_t, y_hat
+        if self.return_hidden_state_grads:
+            return h_t, grads, jacobians, loss_t, y_hat, hidden_states_grads
+        else:
+            return h_t, grads, jacobians, loss_t, y_hat
 
     def rtrl(
         self,
