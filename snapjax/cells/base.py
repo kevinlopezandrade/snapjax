@@ -116,6 +116,9 @@ class RTRLStacked(eqx.Module):
         """
         Gets the maks for performing snap-n, where n >= 1.
         """
+        if n == 0:
+            return self.get_identity_mask()
+
         default = jax.default_backend()
         cpu_device = jax.devices("cpu")[0]
 

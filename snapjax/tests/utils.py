@@ -5,13 +5,18 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import jax.tree_util as jtu
 from jax.experimental.sparse import BCOO
-from jaxtyping import Array
+from jaxtyping import Array, PRNGKeyArray
 
 from snapjax.cells.base import RTRLStacked, is_rtrl_cell
 from snapjax.cells.continous_rnn import SparseFiringRateRNN
-from snapjax.cells.initializers import glorot_weights, normal_channels
+from snapjax.cells.initializers import (
+    glorot_weights,
+    normal_channels,
+    normal_weights,
+    sparse_lecun_matrix,
+)
 from snapjax.cells.readout import IdentityLayer, LinearTanhReadout
-from snapjax.cells.rnn import RNN, RNNLayer
+from snapjax.cells.rnn import RNN, RNNGeneral, RNNLayer
 from snapjax.cells.stacked import StackedCell
 from snapjax.sp_jacrev import DenseProjection, Mask, SparseMask, SparseProjection
 
@@ -106,14 +111,14 @@ def get_random_sequence(T: int, model: StackedCell, seed: int | None = None):
     return inputs
 
 
-def get_random_batch(N: int, T: int, model: StackedCell, seed: int | None = None):
+def get_random_batch(B: int, T: int, model: StackedCell, seed: int | None = None):
     if seed is None:
         key = int(time.time() * 1000)
     else:
         key = seed
 
     batch_inputs = jrandom.normal(
-        jrandom.PRNGKey(key), shape=(N, T, model.layers[0].d_inp)
+        jrandom.PRNGKey(key), shape=(B, T, model.layers[0].d_inp)
     )
 
     return batch_inputs
@@ -130,7 +135,7 @@ def get_random_mask(T: int, seed: int | None = None):
     return mask
 
 
-def get_random_mask_batch(N: int, T: int, seed: int | None = None):
+def get_random_mask_batch(B: int, T: int, seed: int | None = None):
     if seed is None:
         key = int(time.time() * 1000)
     else:
@@ -140,7 +145,7 @@ def get_random_mask_batch(N: int, T: int, seed: int | None = None):
         jrandom.PRNGKey(key),
         p=0.4,
         shape=(
-            N,
+            B,
             T,
         ),
     )
@@ -237,3 +242,30 @@ def is_subset_pytree(A: RTRLStacked, B: RTRLStacked):
     )
 
     return jtu.tree_all(is_subset)
+
+
+def make_sparse_rnn_layer(
+    inp_dim: int,
+    h_dim: int,
+    key: PRNGKeyArray,
+    sparsity_level: float,
+    sparse_u: bool = True,
+    g: float = 0.9,
+):
+    W_key, U_key = jrandom.split(key, 2)
+    if sparsity_level > 0.5:
+        W = sparse_lecun_matrix(W_key, N=h_dim, sparsity_level=sparsity_level)
+
+        if inp_dim != h_dim:
+            U = normal_channels(U_key, h_dim, inp_dim)
+        else:
+            U = sparse_lecun_matrix(U_key, N=h_dim, sparsity_level=sparsity_level)
+    else:
+        W = normal_weights(W_key, N=h_dim, g=g)
+
+        if inp_dim != h_dim:
+            U = normal_channels(U_key, h_dim, inp_dim)
+        else:
+            U = normal_weights(U_key, N=h_dim, g=g)
+
+    return RNNGeneral(W=W, U=U)

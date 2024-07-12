@@ -24,39 +24,13 @@ from snapjax.tests.utils import (
     get_sparse_continous_rnn,
     is_subset_pytree,
     make_dense_jacobian_projection,
+    make_sparse_rnn_layer,
 )
 
 config.update("jax_enable_x64", True)
 
 ATOL = 1e-12
 RTOL = 0.0
-
-
-def make_sparse_rnn_layer(
-    inp_dim: int,
-    h_dim: int,
-    key: PRNGKeyArray,
-    sparsity_level: float,
-    sparse_u: bool = True,
-    g: float = 0.9,
-):
-    W_key, U_key = jrandom.split(key, 2)
-    if sparsity_level > 0.5:
-        W = sparse_lecun_matrix(W_key, N=h_dim, sparsity_level=sparsity_level)
-
-        if inp_dim != h_dim:
-            U = normal_channels(U_key, h_dim, inp_dim)
-        else:
-            U = sparse_lecun_matrix(U_key, N=h_dim, sparsity_level=sparsity_level)
-    else:
-        W = normal_weights(W_key, N=h_dim, g=g)
-
-        if inp_dim != h_dim:
-            U = normal_channels(U_key, h_dim, inp_dim)
-        else:
-            U = normal_weights(U_key, N=h_dim, g=g)
-
-    return RNNGeneral(W=W, U=U)
 
 
 def test_rtrl_bptt_sparse_weights():
