@@ -349,6 +349,42 @@ class Romo:
         return jnp.array(input_samp), jnp.array(target_samp), jnp.array(mask_samp)
 
 
+class DenoiseTask:
+    def __init__(self, T: int, seq_len: int):
+        self.T = T
+        self.seq_len = seq_len
+        self.alphabet_size = 9
+        self.inp_dim = self.alphabet_size + 2
+        self.out_dim = self.alphabet_size + 1
+
+    @partial(jax.jit, static_argnums=(0,))
+    def sample(self, key: PRNGKeyArray):
+        seq_key, places_key = jrandom.split(key)
+        seq = jrandom.randint(
+            seq_key, minval=1, maxval=self.alphabet_size, shape=(self.seq_len,)
+        )
+        seq = seq.squeeze()
+
+        zeros1 = jnp.zeros(self.T + self.seq_len - 1)
+        ind = jrandom.choice(
+            places_key, self.T + self.seq_len - 1, shape=(self.seq_len,), replace=False
+        )
+        ind = jnp.sort(ind.squeeze())
+        zeros1 = zeros1.at[ind].set(seq)
+
+        zeros2 = jnp.zeros(self.T + self.seq_len)
+        marker = 10 * np.ones(1)
+        zeros3 = np.zeros(self.seq_len)
+
+        x = jnp.concatenate((zeros1, marker, zeros3)).astype(jnp.int32)
+        x = jax.nn.one_hot(x, num_classes=self.alphabet_size + 2)
+        y = jnp.concatenate((zeros2, seq)).astype(jnp.int32)
+        y = jax.nn.one_hot(y, num_classes=self.alphabet_size + 1)
+        mask = jnp.ones((y.shape[0],))
+
+        return x, y, mask
+
+
 class OnlineRegressionDataLoader:
     def __init__(
         self,

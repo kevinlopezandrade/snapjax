@@ -119,8 +119,10 @@ class Welford:
         self.k = 0
         self.M = jnp.zeros(shape)
         self.S = jnp.zeros(shape)
+        self.crossings = 0
+        self.prev = None
 
-    def update(self, x):
+    def update(self, x, crossings: bool = False):
         if x is None:
             return
         self.k += 1
@@ -128,8 +130,15 @@ class Welford:
         newS = self.S + (x - self.M) * (x - newM)
         self.M, self.S = newM, newS
 
-    def __call__(self, x):
-        self.update(x)
+        if crossings:
+            if self.prev is not None:
+                if jnp.sign(x) != jnp.sign(self.prev):
+                    self.crossings += 1
+
+            self.prev = x
+
+    def __call__(self, x, crossings: bool = False):
+        self.update(x, crossings=crossings)
 
     @property
     def mean(self):
