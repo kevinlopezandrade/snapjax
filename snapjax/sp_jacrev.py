@@ -229,6 +229,10 @@ def tree_vjp(fun, primal_tree: PyTree) -> PyTree:
     return jtu.tree_unflatten(in_tree, primals_vjp)
 
 
+class _FlagSpJac:
+    pass
+
+
 def new_tree_vjp(
     fun, primal_tree: PyTree, V: PyTree, transpose: bool = False
 ) -> PyTree:
@@ -249,11 +253,14 @@ def new_tree_vjp(
 
     _V, _ = jtu.tree_flatten(
         V,
-        is_leaf=lambda x: x is None
+        is_leaf=lambda x: isinstance(x, _FlagSpJac)
         or isinstance(x, (SparseProjection, DenseProjection)),
     )
 
     N = len(primals)
+
+    assert len(_V) == N
+
     primals_vjp = [None] * N
     for i in range(N):
         f_partial, dyn_args = argnums_partial(
@@ -280,7 +287,7 @@ def new_tree_vjp(
         out, f_partial_vjp = _vjp(
             f_partial, *dyn_args
         )  # dyn_args must only contain just one arg
-        if _V[i] is not None:
+        if not isinstance(_V[i], _FlagSpJac):
             primals_vjp[i] = apply_sp_pullback(
                 f_partial_vjp, _V[i], transpose=transpose
             )
@@ -377,7 +384,7 @@ def apply_sp_pullback(
     )
 
 
-def sp_jacrev(
+def old_sp_jacrev(
     fun: Callable[[_T], Array], V: _T, transpose: bool = False
 ) -> Callable[[_T], Array]:
     """
@@ -408,7 +415,7 @@ def sp_jacrev(
     return _sp_jacfun
 
 
-def new_sp_jacrev(
+def sp_jacrev(
     fun: Callable[[_T], Array],
     V: _T,
     transpose: bool = False,
@@ -432,7 +439,10 @@ def new_sp_jacrev(
             wrap_init(fun), argnums, args, require_static_args_hashable=False
         )
 
-        _V = (V, *(None for _ in range(1, len(dyn_args))))
+        # NOTE: V, when we flatten again might introduce extra None's
+        # we cannot control this since it depends in the PyTree of the
+        # users. Therefore to tag the extra dyna arguments we use a flag.
+        _V = (V, *(_FlagSpJac() for _ in range(1, len(dyn_args))))
 
         tree_jacobians = new_tree_vjp(
             f_partial.call_wrapped, dyn_args, _V, transpose=transpose

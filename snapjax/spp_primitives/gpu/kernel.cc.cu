@@ -4,6 +4,7 @@
 #include <cuda_runtime_api.h>
 #include <cusparse.h>
 #include <iostream>
+#include <math.h>
 
 
 #define CHECK_CUSPARSE(func)                                                   \
@@ -107,7 +108,7 @@ void spp_mat_mul(cudaStream_t stream, void **buffers, const char *opaque, std::s
     const int sp_size = desc.sp_size;
     const int b_cols = desc.B_dim_2;
 
-    const int block_size = 128;
+    const int block_size = 1024;
     const int grid_size = int((sp_size + block_size - 1) / block_size); // >= 1
 
     kernel_spp_mat_mul<<<grid_size, block_size, 0, stream>>>(data, cols, indptr, B, b_cols, sp, sp_size, out);
@@ -128,7 +129,7 @@ void spp_mat_mul_double(cudaStream_t stream, void **buffers, const char *opaque,
     const int sp_size = desc.sp_size;
     const int b_cols = desc.B_dim_2;
 
-    const int block_size = 128;
+    const int block_size = 1024;
     const int grid_size = int((sp_size + block_size - 1) / block_size); // >= 1
 
     kernel_spp_mat_mul_double<<<grid_size, block_size, 0, stream>>>(data, cols, indptr, B, b_cols, sp, sp_size, out);

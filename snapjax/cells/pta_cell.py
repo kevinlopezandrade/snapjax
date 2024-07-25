@@ -1,16 +1,11 @@
-from typing import List, Self, Tuple
-
 import equinox as eqx
 import equinox.nn as nn
 import jax
 import jax.numpy as jnp
-import jax.tree_util as jtu
-from jaxtyping import Array, PRNGKeyArray, Scalar
+from jaxtyping import Array, PRNGKeyArray
 
-from snapjax.cells.base import RTRLCell, RTRLLayer, State
+from snapjax.cells.base import RTRLCell, State
 from snapjax.cells.initializers import pta_matrix
-from snapjax.cells.utils import snap_n_mask
-from snapjax.sp_jacrev import sp_jacrev
 
 
 class GLU(eqx.Module):
@@ -75,8 +70,3 @@ class PTACell(RTRLCell):
         h_new = jnp.tanh(self.weights_hh @ state + self.weights_ih(input))
 
         return h_new
-
-    def make_snap_n_mask(self, n: int) -> Self:
-        mask = jtu.tree_map(lambda leaf: snap_n_mask(leaf, n), self)
-
-        return mask

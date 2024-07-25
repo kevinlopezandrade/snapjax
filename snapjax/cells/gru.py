@@ -2,14 +2,13 @@ import equinox as eqx
 import equinox.nn as nn
 import jax
 import jax.random as jrandom
-import jax.tree_util as jtu
 from jaxtyping import Array, PRNGKeyArray
 
-from snapjax.cells.base import RTRLCell, State
-from snapjax.cells.utils import snap_n_mask
+from snapjax.cells.base import State
+from snapjax.cells.rnn import RNNStandard
 
 
-class GRU(RTRLCell):
+class GRU(RNNStandard):
     """
     Gated recurrent unit from Engel[10] which allows
     I_t being sparse.
@@ -53,11 +52,3 @@ class GRU(RTRLCell):
         h_new = (1 - z) * h + z * a
 
         return h_new
-
-    def make_snap_n_mask(self, n: int):
-        mask = jtu.tree_map(
-            lambda leaf: snap_n_mask(leaf, n),
-            self,
-        )
-
-        return mask

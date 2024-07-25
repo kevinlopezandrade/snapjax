@@ -11,7 +11,7 @@ from jaxtyping import Array, PRNGKeyArray, PyTree
 from snapjax.algos import update_cell_jacobians
 from snapjax.cells.base import RTRLCell, RTRLLayer, State, Traces
 from snapjax.cells.utils import snap_n_mask, snap_n_mask_bcoo
-from snapjax.sp_jacrev import Mask, new_sp_jacrev, standard_jacobian
+from snapjax.sp_jacrev import Mask, sp_jacrev, standard_jacobian
 
 
 @jax.jit
@@ -45,7 +45,7 @@ class RNNStandard(RTRLCell):
         self, state: State, input: Array, jacobian_projection: Self | None = None
     ) -> Tuple[State, RNNPayload]:
         if jacobian_projection:
-            sp_jacobian_fun = new_sp_jacrev(
+            sp_jacobian_fun = sp_jacrev(
                 self.f.__func__, jacobian_projection, transpose=True, argnums=(0, 1, 2)
             )
             inmediate_jacobian, dynamics, input_dynamics = jax.lax.stop_gradient(

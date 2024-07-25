@@ -1,5 +1,4 @@
-from functools import partial
-from typing import Any, Callable, List, Sequence, Tuple, cast
+from typing import Callable, Sequence
 
 import equinox as eqx
 import jax
@@ -17,7 +16,6 @@ from snapjax.cells.base import (
     State,
     is_rtrl_cell,
 )
-from snapjax.cells.lru import TracesLRU
 from snapjax.losses import l2
 from snapjax.sp_jacrev import (
     DenseProjection,
