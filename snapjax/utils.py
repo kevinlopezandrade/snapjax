@@ -1,28 +1,15 @@
-import math
 from functools import partial
-from typing import Any, Dict, Tuple
+from typing import Any, Tuple
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jrandom
 import jax.tree_util as jtu
 from jax.experimental.sparse import BCOO
-from jaxtyping import Array, PRNGKeyArray
+from jaxtyping import Array
 from optax._src.base import GradientTransformation
-from tqdm import tqdm
 
-from snapjax.algos import (
-    forward_rtrl,
-    make_init_state,
-    make_zeros_grads,
-    make_zeros_jacobians_sp,
-)
 from snapjax.cells.base import RTRLStacked
-from snapjax.dataloaders.base import bgen
-from snapjax.losses import l_infinity, mean_squared_loss
-from snapjax.mlops import Algorithm, get_algorithm
-from snapjax.sp_jacrev import make_jacobian_projection
 
 
 @jax.jit
@@ -149,120 +136,3 @@ class Welford:
         if self.k == 1:
             return 0
         return jnp.sqrt(self.S / (self.k - 1))
-
-
-def train(
-    N: int,
-    bs: int,
-    rnn: RTRLStacked,
-    generator: Any,
-    algorithm: Algorithm,
-    optimizer: Any,
-    algorithm_params: Dict[str, Any] | None = None,
-    return_models: bool = False,
-):
-    if algorithm_params is not None:
-        _gradient = jtu.Partial(
-            get_algorithm(algorithm), loss_func=mean_squared_loss, **algorithm_params
-        )
-    else:
-        _gradient = jtu.Partial(get_algorithm(algorithm), loss_func=mean_squared_loss)
-
-    gradient = jax.jit(jax.vmap(_gradient, in_axes=(None, 0, 0, 0, None, None)))
-
-    jacobian_mask = None
-    jacobian_projection = None
-
-    if algorithm == Algorithm.RTRL:
-        jacobian_mask = rnn.get_snap_n_mask(1)
-        jacobian_projection = make_jacobian_projection(jacobian_mask)
-
-    optim_state = optimizer.init(rnn)
-
-    eval_loss = jax.vmap(l_infinity)  # For a sequence
-    eval_loss = jax.vmap(eval_loss)  # For a batch of sequences
-    eval_loss = jax.jit(eval_loss)
-
-    errors = []
-    models = [rnn]
-
-    for inp, target, mask in tqdm(bgen(generator)(N=N, bs=bs), total=N):
-        acc_loss, acc_grads, preds = gradient(
-            rnn, inp, target, mask, jacobian_mask, jacobian_projection
-        )
-        rnn, optim_state = batch_apply_update(rnn, acc_grads, optim_state, optimizer)
-        losses = eval_loss(target, preds, mask)
-        max_loss = jnp.max(losses)
-
-        errors.append(max_loss)
-        if return_models:
-            models.append(rnn)
-
-    return errors, models if return_models else rnn
-
-
-def train_online(
-    N: int,
-    rnn: RTRLStacked,
-    generator: Any,
-    optimizer: Any,
-    return_models: bool = False,
-    flip_coin: bool = False,
-    key: PRNGKeyArray | None = None,
-):
-    _gradient = jtu.Partial(forward_rtrl, loss_func=mean_squared_loss)
-    gradient = jax.jit(_gradient)
-
-    jacobian_mask = rnn.get_snap_n_mask(1)
-    jacobian_projection = make_jacobian_projection(jacobian_mask)
-
-    optim_state = optimizer.init(rnn)
-
-    eval_loss = jax.vmap(l_infinity)  # For a sequence
-    eval_loss = jax.jit(eval_loss)
-
-    errors = []
-    models = [rnn]
-    for inp, target, mask in tqdm(generator(N=N), total=N):
-        T = inp.shape[0]
-        jacobian = make_zeros_jacobians_sp(jacobian_projection)
-        h = make_init_state(rnn)
-        acc_grads = make_zeros_grads(rnn)
-        preds = []
-        for i in range(T):
-            h, grads, jacobian, loss, pred = gradient(
-                rnn,
-                jacobian,
-                h,
-                inp[i],
-                target[i],
-                mask[i],
-                jacobian_mask,
-                jacobian_projection,
-            )
-
-            acc_grads = jtu.tree_map(
-                lambda acc_grads, grads: acc_grads + grads, acc_grads, grads
-            )
-
-            if flip_coin:
-                update = jrandom.choice(key, jnp.array([True, False]))
-                key, _ = jrandom.split(key)
-            else:
-                update = mask[i] == 1.0
-
-            if update:
-                rnn, optim_state = apply_update(rnn, acc_grads, optim_state, optimizer)
-
-            preds.append(pred)
-
-        preds = jnp.stack(preds)
-        losses = eval_loss(target, preds, mask)
-        max_loss = jnp.max(losses)
-
-        if return_models:
-            models.append(rnn)
-
-        errors.append(max_loss)
-
-    return errors, models if return_models else rnn

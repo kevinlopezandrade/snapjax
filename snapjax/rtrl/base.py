@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, List, Sequence, cast
+from typing import Any, Callable, List, Sequence, cast
 
 import equinox as eqx
 import jax
@@ -21,6 +21,7 @@ from snapjax.cells.base import (
 )
 from snapjax.losses import l2
 from snapjax.sp_jacrev import DenseProjection, SparseProjection, standard_jacobian
+from snapjax.utils import apply_update
 
 
 @partial(jax.jit, static_argnums=(9, 10))
@@ -71,6 +72,7 @@ class RTRL(eqx.Module):
     use_scan: bool = eqx.field(static=True)
     regularizer: Callable = eqx.field(static=True)
     return_extra: bool = eqx.field(static=True)
+    update_func: Callable = eqx.field(static=True)
 
     def __init__(
         self,
@@ -78,11 +80,13 @@ class RTRL(eqx.Module):
         use_scan: bool = True,
         regularizer: Callable | None = None,
         return_extra: bool = False,
+        update_func: Any = None,
     ):
         self.loss_func = loss_func
         self.use_scan = use_scan
         self.regularizer = regularizer
         self.return_extra = return_extra
+        self.update_func = update_func
 
     @jax.jit
     def step(
@@ -226,6 +230,69 @@ class RTRL(eqx.Module):
         acc_loss = cast(float, acc_loss)
         y_hats = cast(Array, y_hats)
         return acc_loss, acc_grads, y_hats
+
+    @jax.jit
+    def rtrl_online(
+        self,
+        model: RTRLStacked,
+        inputs: Array,
+        targets: Array,
+        mask: Array,
+        state: Any,
+        jacobian_mask: RTRLStacked | None = None,
+        jacobian_projection: RTRLStacked | None = None,
+    ):
+
+        def forward_repack(carry, data):
+            input, target, mask = data
+            h_prev, jacobians_prev, model, state = carry
+
+            out = self.step(
+                model,
+                jacobians_prev,
+                h_prev,
+                input,
+                target,
+                mask,
+                jacobian_mask=jacobian_mask,
+                jacobian_projection=jacobian_projection,
+            )
+            h_t, grads, jacobians_t, loss_t, y_hat = out
+            model, state = jax.lax.cond(
+                mask == 1, self.update_func, lambda x, y, z: (x, z), model, grads, state
+            )
+
+            return (h_t, jacobians_t, model, state), y_hat
+
+        h_init: Sequence[State] = make_init_state(model)
+        acc_grads: RTRLStacked = make_zeros_grads(model)
+
+        zero_jacobians = self.init_traces(model, jacobian_projection)
+
+        acc_loss = 0.0
+
+        if self.use_scan:
+            carry_T, y_hats = jax.lax.scan(
+                forward_repack,
+                init=(h_init, zero_jacobians, model, state),
+                xs=(inputs, targets, mask),
+            )
+        else:
+            carry = (h_init, zero_jacobians, model, state)
+            T = inputs.shape[0]
+            y_hats = [None] * T
+            for i in range(inputs.shape[0]):
+                carry, y_hat = forward_repack(carry, (inputs[i], targets[i], mask[i]))
+                y_hats[i] = y_hat
+
+            y_hats = jnp.stack(y_hats)
+            carry_T = carry
+
+        h_T, jacobians_T, model, state = carry_T
+
+        acc_loss = cast(float, acc_loss)
+        y_hats = cast(Array, y_hats)
+        return y_hats, model, state
 
     @staticmethod
     def init_traces(model: RTRLStacked, jacobian_projection: RTRLStacked): ...
