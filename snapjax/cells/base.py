@@ -167,6 +167,9 @@ class RTRLStacked(eqx.Module):
     def __forward__(self, state: Stacked[State], input: Array):
         return self.f_bptt(state, input)
 
+    def __forward_and_hidden__(self, state: Stacked[State], input: Array):
+        return self.f_bptt_and_hidden(state, input)
+
     def num_rtrl_layers(self) -> int:
         num = 0
         for layer in self.layers:

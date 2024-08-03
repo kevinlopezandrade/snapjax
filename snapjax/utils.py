@@ -9,6 +9,7 @@ from jax.experimental.sparse import BCOO
 from jaxtyping import Array
 from optax._src.base import GradientTransformation
 
+from snapjax.algos import make_init_state
 from snapjax.cells.base import RTRLStacked
 
 
@@ -78,6 +79,73 @@ def sparse_aware_init(model: RTRLStacked, optimizer: GradientTransformation):
     return optim_state
 
 
+@jax.jit
+def inference(rnn: RTRLStacked, xs):
+    h_init = make_init_state(rnn)
+    return jax.lax.scan(rnn.__forward__, h_init, xs)
+
+
+@jax.jit
+def get_dynamics(
+    rnn: RTRLStacked,
+    inp: Array,
+):
+
+    def scan_dynamics(h_prev, inp):
+        (
+            h,
+            _,
+        ) = rnn.f_bptt(h_prev, inp)
+
+        D_instant, _ = jax.jacobian(
+            rnn.layers[0].f_bptt.__func__, argnums=(1), has_aux=True
+        )(rnn.layers[0], h_prev[0], inp)
+        X_instant, _ = jax.jacobian(
+            rnn.layers[0].f_bptt.__func__, argnums=(2), has_aux=True
+        )(rnn.layers[0], h_prev[0], inp)
+        return h, (D_instant, X_instant)
+
+    h = make_init_state(rnn)
+
+    _, out = jax.lax.scan(scan_dynamics, init=h, xs=inp)
+
+    return out
+
+
+@jax.jit
+def forward_sensitivity(state_jacobians):
+    """
+    Computes the lim_t -> T of dh_t/dh_0
+    """
+    I = jnp.eye(state_jacobians[0].shape[0])
+
+    def f(carry, input):
+        dh_t_dh_0 = input @ carry
+
+        return dh_t_dh_0, dh_t_dh_0
+
+    _, out = jax.lax.scan(f, init=I, xs=state_jacobians)
+
+    return out
+
+
+@jax.jit
+def backward_sensitivity(state_jacobians):
+    """
+    Computes the lim_t -> 0 of dh_T/dh_t
+    """
+    I = jnp.eye(state_jacobians[0].shape[0])
+
+    def f(carry, input):
+        dh_T_dh_t = carry @ input
+
+        return dh_T_dh_t, dh_T_dh_t
+
+    _, out = jax.lax.scan(f, init=I, xs=state_jacobians[::-1])
+
+    return out[::-1]
+
+
 class Welford:
     """Implements Welford's algorithm for computing a running mean
     and standard deviation as described at:
@@ -136,3 +204,9 @@ class Welford:
         if self.k == 1:
             return 0
         return jnp.sqrt(self.S / (self.k - 1))
+
+    @property
+    def variance(self):
+        if self.k == 1:
+            return 0
+        return self.S / (self.k - 1)

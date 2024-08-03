@@ -119,3 +119,13 @@ class SingleCell(RTRLStacked):
         new_state, out = self.layers[0].f_bptt(state[0], input)
 
         return tuple([new_state]), out
+
+    def f_bptt_and_hidden(
+        self, state: Stacked[State], input: Array
+    ) -> Tuple[Stacked[State], Array]:
+
+        assert isinstance(self.layers[0], RTRLLayer)
+
+        new_state, out = self.layers[0].f_bptt(state[0], input)
+
+        return tuple([new_state]), (new_state, out)
