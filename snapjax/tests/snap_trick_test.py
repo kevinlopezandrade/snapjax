@@ -1,5 +1,3 @@
-import time
-
 import equinox as eqx
 import jax.random as jrandom
 from jax import config
@@ -91,7 +89,7 @@ def test_snap_trick():
     T = 150
     N = 128
 
-    seed = int(time.time() * 1000)
+    seed = 0
     w_key, u_key, c_key, data_key = jrandom.split(PRNGKey(seed), 4)
     W_0 = glorot_weights(w_key, inp_dim=N, out_dim=N)
     C = normal_channels(c_key, out_dim=N, inp_dim=N)

@@ -7,9 +7,9 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from jax.experimental.sparse import BCOO
 from jaxtyping import Array
-from optax._src.base import GradientTransformation
+from optax import GradientTransformation
 
-from snapjax.algos import make_init_state
+from snapjax.state import make_init_state
 from snapjax.cells.base import RTRLStacked
 
 

@@ -1,5 +1,3 @@
-import time
-
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -29,7 +27,7 @@ def get_stacked_rnn(
     sparse: bool = False,
 ):
     if seed is None:
-        key = int(time.time() * 1000)
+        key = 0
     else:
         key = seed
 
@@ -57,7 +55,7 @@ def get_stacked_rnn_exact(
     sparse: bool = False,
 ):
     if seed is None:
-        key = int(time.time() * 1000)
+        key = 0
     else:
         key = seed
 
@@ -82,7 +80,7 @@ def get_sparse_continous_rnn(
     hidden_size: int, input_size: int, sparsity_fraction: float, seed: int | None = None
 ):
     if seed is None:
-        key = int(time.time() * 1000)
+        key = 0
     else:
         key = seed
 
@@ -102,7 +100,7 @@ def get_sparse_continous_rnn(
 
 def get_random_sequence(T: int, model: StackedCell, seed: int | None = None):
     if seed is None:
-        key = int(time.time() * 1000)
+        key = 0
     else:
         key = seed
 
@@ -113,7 +111,7 @@ def get_random_sequence(T: int, model: StackedCell, seed: int | None = None):
 
 def get_random_batch(B: int, T: int, model: StackedCell, seed: int | None = None):
     if seed is None:
-        key = int(time.time() * 1000)
+        key = 0
     else:
         key = seed
 
@@ -126,7 +124,7 @@ def get_random_batch(B: int, T: int, model: StackedCell, seed: int | None = None
 
 def get_random_mask(T: int, seed: int | None = None):
     if seed is None:
-        key = int(time.time() * 1000)
+        key = 0
     else:
         key = seed
 
@@ -137,7 +135,7 @@ def get_random_mask(T: int, seed: int | None = None):
 
 def get_random_mask_batch(B: int, T: int, seed: int | None = None):
     if seed is None:
-        key = int(time.time() * 1000)
+        key = 0
     else:
         key = seed
 

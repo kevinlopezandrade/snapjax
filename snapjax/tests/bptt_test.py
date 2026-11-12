@@ -1,7 +1,7 @@
-import time
 from typing import Any, Callable
 
 import equinox as eqx
+import pytest
 from jax import config
 
 from snapjax.cells.lru import LRU, LRULayer
@@ -31,13 +31,14 @@ ATOL = 1e-12
 RTOL = 0.0
 
 
-def test_no_snap_one_layer():
+@pytest.mark.parametrize("hidden_size", [8, pytest.param(256, marks=pytest.mark.slow)])
+def test_no_snap_one_layer(hidden_size):
     """
     RTRL and BPTT should agree in the computed accumulated gradients,
     if there is only layer in the stacked rnn.
     """
     T = 50
-    model = get_stacked_rnn(1, 256, 256)
+    model = get_stacked_rnn(1, hidden_size, hidden_size)
     inputs = get_random_sequence(T, model)
     targets = get_random_sequence(T, model)
     mask = get_random_mask(T)
@@ -339,7 +340,7 @@ def test_bptt_snap_diagonal_sparse():
 
 
 def test_lru():
-    seed = int(time.time() * 1000)
+    seed = 0
     key = jrandom.PRNGKey(seed)
     cell_key, readout_key, mlp_key = jrandom.split(key, 3)
 

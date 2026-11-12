@@ -133,7 +133,7 @@ class RTRLStacked(eqx.Module):
                 is_leaf=is_rtrl_cell,
             )
 
-        # Move back to GPU once computed.
+        # Restore the default device once computed (also valid on CPU).
         jacobian_mask = jtu.tree_map(
             lambda leaf: jax.device_put(leaf, jax.devices(default)[0]), jacobian_mask
         )
@@ -155,7 +155,7 @@ class RTRLStacked(eqx.Module):
                 is_leaf=is_rtrl_cell,
             )
 
-        # Move back to GPU once computed.
+        # Restore the default device once computed (also valid on CPU).
         jacobian_mask = jtu.tree_map(
             lambda leaf: jax.device_put(leaf, jax.devices(default)[0]), jacobian_mask
         )

@@ -9,7 +9,7 @@ from chex import Scalar
 from jax.experimental.sparse import BCOO
 from jaxtyping import Array
 
-from snapjax.algos import make_init_state, make_perturbations, make_zeros_grads
+from snapjax.state import make_init_state, make_perturbations, make_zeros_grads
 from snapjax.cells.base import (
     ArrayTree,
     RTRLLayer,

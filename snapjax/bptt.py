@@ -7,7 +7,7 @@ import jax.tree_util as jtu
 from jax.experimental.sparse import BCOO
 from jaxtyping import Array, Scalar
 
-from snapjax.algos import make_init_state
+from snapjax.state import make_init_state
 from snapjax.cells.base import RTRLStacked
 from snapjax.losses import l2
 
@@ -62,12 +62,10 @@ def bptt(
         )
     else:
         (acc_loss, preds), acc_grads = jsparse.value_and_grad(
-            _loss, argnums=(0,), has_aux=True
+            _loss, argnums=0, has_aux=True
         )(model, inputs, targets)
-        acc_grads = jtu.tree_unflatten(
-            jtu.tree_structure(model, is_leaf=lambda node: isinstance(node, BCOO)),
-            acc_grads,
-        )
+        # Sparse autodiff already reconstructs the model PyTree. Extract only
+        # the trainable data buffers from its sparse gradient leaves.
         acc_grads = jtu.tree_map(
             lambda node: node.data if isinstance(node, BCOO) else node,
             acc_grads,

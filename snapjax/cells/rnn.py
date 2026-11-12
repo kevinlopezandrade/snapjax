@@ -8,7 +8,7 @@ import jax.tree_util as jtu
 from jax.experimental.sparse import BCOO
 from jaxtyping import Array, PRNGKeyArray, PyTree
 
-from snapjax.algos import update_cell_jacobians
+from snapjax.jacobians import update_cell_jacobians
 from snapjax.cells.base import RTRLCell, RTRLLayer, State, Traces
 from snapjax.cells.utils import snap_n_mask, snap_n_mask_bcoo
 from snapjax.sp_jacrev import Mask, sp_jacrev, standard_jacobian

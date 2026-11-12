@@ -1,5 +1,6 @@
 import jax.tree_util as jtu
 import optax as opt
+import pytest
 from jax import config
 
 config.update("jax_enable_x64", True)
@@ -7,12 +8,9 @@ config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
-from snapjax.algos import (  # TODO: This is an ugly workaround.
-    forward_rtrl,
-    make_init_state,
-)
 from snapjax.losses import mean_squared_loss
 from snapjax.rtrl.base import RTRLApprox
+from snapjax.state import make_init_state
 from snapjax.tests.utils import get_random_mask, get_random_sequence, get_stacked_rnn
 from snapjax.utils import apply_update
 
@@ -20,9 +18,10 @@ ATOL = 1e-12
 RTOL = 0.0
 
 
-def test_online_updates():
+@pytest.mark.parametrize("hidden_size", [8, pytest.param(256, marks=pytest.mark.slow)])
+def test_online_updates(hidden_size):
     T = 50
-    model = get_stacked_rnn(1, 256, 256)
+    model = get_stacked_rnn(1, hidden_size, hidden_size)
     inp = get_random_sequence(T, model)
     target = get_random_sequence(T, model)
     mask = get_random_mask(T)

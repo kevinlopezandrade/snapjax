@@ -107,36 +107,10 @@ def ensure_static_codebase(
 
 
 def set_cuda():
-    try:
-        # Query GPU details, including process information, in JSON format
-        result = subprocess.run(
-            ["nvidia-smi", "-q", "-x"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError("Failed to execute nvidia-smi") from e
-
-    # Use XML parsing to find a GPU without attached processes
-    try:
-        import xml.etree.ElementTree as ET
-
-        root = ET.fromstring(result.stdout)
-        for gpu in root.findall("gpu"):
-            processes = gpu.find("processes")
-            if not processes.findall("process_info"):
-                # This GPU has no processes attached, consider it free
-                gpu_id = gpu.find("minor_number").text
-                os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
-                print(f"Set CUDA_VISIBLE_DEVICES to GPU {gpu_id}.")
-                return
-    except Exception as e:
-        raise RuntimeError("Error parsing nvidia-smi output") from e
-
-    # If we reach this point, no free GPU was found
-    raise RuntimeError("No available CUDA GPUs found.")
+    """Legacy GPU selector, unavailable in the supported CPU runtime."""
+    raise RuntimeError(
+        "snapjax now supports CPU execution; set JAX_PLATFORMS=cpu before starting Python"
+    )
 
 
 def get_algorithm(algorithm: Algorithm):
