@@ -1,6 +1,6 @@
 """Sparse-preserving multiplication with native CPU kernels.
 
-The Numba callbacks use XLA's legacy untyped CPU custom-call ABI. Keep them
+The Numba callbacks use XLA's unified, status-returning custom-call ABI. Keep them
 alive for as long as compiled JAX executables may hold their function pointers.
 CUDA sources are archival and are never imported or registered here.
 """
@@ -10,20 +10,21 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import ffi
 from jax.core import ShapedArray
-from jax.extend import ffi
 from jax.extend.core import Primitive
 from jax.interpreters import batching, mlir, xla
-from jax.interpreters.mlir import ir
 from numba import carray, cfunc, types
 
 
-_CALL_SIGNATURE = types.void(types.voidptr, types.CPointer(types.voidptr))
+_CALL_SIGNATURE = types.void(
+    types.voidptr, types.CPointer(types.voidptr), types.voidptr, types.uintp, types.voidptr
+)
 
 
 def _make_cpu_kernel(dtype):
     @cfunc(_CALL_SIGNATURE)
-    def kernel(output_ptr, input_ptrs):
+    def kernel(output_ptr, input_ptrs, opaque, opaque_len, status):
         data_size = carray(input_ptrs[5], 1, dtype=np.int32)[0]
         indptr_size = carray(input_ptrs[6], 1, dtype=np.int32)[0]
         b_rows = carray(input_ptrs[7], 1, dtype=np.int32)[0]
@@ -107,21 +108,18 @@ spp_csr_matmul_p.def_abstract_eval(_abstract_eval)
 def _cpu_lowering(ctx, data, cols, indptr, rhs, sp):
     avals = ctx.avals_in
     sizes = (avals[0].shape[0], avals[2].shape[0], *avals[3].shape, avals[4].shape[0])
-    out_type = ir.RankedTensorType.get(
-        (avals[4].shape[0],), ir.RankedTensorType(data.type).element_type
-    )
-    return mlir.custom_call(
+    size_avals = [ShapedArray((), np.dtype(np.int32)) for _ in sizes]
+    return ffi.ffi_lowering(
         _CPU_TARGETS[avals[0].dtype],
-        result_types=[out_type],
-        operands=[data, cols, indptr, rhs, sp]
-        + [mlir.ir_constant(np.int32(size)) for size in sizes],
-        operand_layouts=[tuple(range(arg.ndim - 1, -1, -1)) for arg in avals]
-        + [()] * len(sizes),
-        result_layouts=[(0,)],
-        # ORIGINAL ABI: void callback(void *output, const void **inputs).
+        # Unified ABI: output, inputs, opaque data, opaque size, status.
+        # Leaving status untouched signals success; no opaque data is used.
         # This lowering version is distinct from registration's api_version=0.
-        api_version=1,
-    ).results
+        api_version=3,
+    )(
+        ctx.replace(avals_in=[*avals, *size_avals]),
+        data, cols, indptr, rhs, sp,
+        *[mlir.ir_constant(np.int32(size)) for size in sizes],
+    )
 
 
 mlir.register_lowering(spp_csr_matmul_p, _cpu_lowering, platform="cpu")

@@ -1,3 +1,4 @@
+from operator import index
 from typing import Any, Callable, Sequence, Tuple, TypeVar
 
 import equinox as eqx
@@ -8,11 +9,8 @@ import jax.tree_util as jtu
 import networkx
 import numpy as onp
 import scipy.sparse as ssparse
-from jax._src.api import _std_basis, _vjp
-from jax._src.api_util import argnums_partial
-from jax.experimental.sparse._base import JAXSparse
-from jax.experimental.sparse.ad import flatten_fun_for_sparse_ad
-from jax.extend.linear_util import wrap_init
+from jax.experimental.sparse import JAXSparse
+from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
 
@@ -181,52 +179,34 @@ def flatten_function(fun, in_tree):
     return flat
 
 
-def tree_vjp(fun, primal_tree: PyTree) -> PyTree:
-    """
-    Takes a function 'fun' which has only one positional
-    argument, which is a PyTree, and returns a PyTree
-    with the same structure that for each leafs contains
-    the pullback 'vjp' evaluated at the corresponding leaf.
+def _partial_args(fun, argnums, args):
+    """Bind unselected arguments without requiring them to be hashable."""
+    argnums = (argnums,) if isinstance(argnums, int) else tuple(argnums)
+    argnums = tuple(index(i) for i in argnums)
+    if any(i < -len(args) or i >= len(args) for i in argnums):
+        raise ValueError("argnums contains an out-of-range argument index")
+    argnums = tuple(i % len(args) for i in argnums)
 
-    Args:
-        fun: Function that takes only one positional
-            argument which is a PyTree.
-        primal_tree: PyTree with the primal values for each
-            vjp in the returned PyTree.
-    """
-    primals, in_tree = jtu.tree_flatten(primal_tree, is_leaf=is_sparse)
-    flat_f = flatten_function(fun, in_tree)
+    def selected(*values):
+        full_args = list(args)
+        for i, value in zip(argnums, values):
+            full_args[i] = value
+        return fun(*full_args)
 
-    N = len(primals)
-    primals_vjp = [None] * N
-    for i in range(N):
-        f_partial, dyn_args = argnums_partial(
-            wrap_init(flat_f),
-            dyn_argnums=i,
-            args=primals,
-            require_static_args_hashable=False,
-        )
+    return selected, tuple(args[i] for i in argnums)
 
-        if is_sparse(primals[i]):
-            # Here I must flatten again since its a sparse array.
-            f_to_reflaten = f_partial.call_wrapped
-            fun_reflat, argnums_flat, args_flat, postprocess_gradients = (
-                flatten_fun_for_sparse_ad(f_to_reflaten, 0, dyn_args)
-            )
-            # Repartial again for the vjp
-            f_partial, dyn_args = argnums_partial(
-                wrap_init(fun_reflat),
-                dyn_argnums=0,
-                args=args_flat,
-                require_static_args_hashable=False,
-            )
 
-        out, f_partial_vjp = _vjp(
-            f_partial, *dyn_args
-        )  # dyn_args must only contain just one arg
-        primals_vjp[i] = f_partial_vjp
+def _leaf_vjp(fun, primals, i):
+    leaf_fun, (primal,) = _partial_args(fun, i, primals)
+    if is_sparse(primal):
+        # Differentiate only stored values; sparse indices remain fixed.
+        buffers, tree = jtu.tree_flatten(primal)
 
-    return jtu.tree_unflatten(in_tree, primals_vjp)
+        def data_fun(data):
+            return leaf_fun(jtu.tree_unflatten(tree, [data, *buffers[1:]]))
+
+        return jax.vjp(data_fun, buffers[0])
+    return jax.vjp(leaf_fun, primal)
 
 
 class _FlagSpJac:
@@ -263,36 +243,15 @@ def new_tree_vjp(
 
     primals_vjp = [None] * N
     for i in range(N):
-        f_partial, dyn_args = argnums_partial(
-            wrap_init(flat_f),
-            dyn_argnums=i,
-            args=primals,
-            require_static_args_hashable=False,
-        )
-
-        if is_sparse(primals[i]):
-            # Here I must flatten again since its a sparse array.
-            f_to_reflaten = f_partial.call_wrapped
-            fun_reflat, argnums_flat, args_flat, postprocess_gradients = (
-                flatten_fun_for_sparse_ad(f_to_reflaten, 0, dyn_args)
-            )
-            # Repartial again for the vjp
-            f_partial, dyn_args = argnums_partial(
-                wrap_init(fun_reflat),
-                dyn_argnums=0,
-                args=args_flat,
-                require_static_args_hashable=False,
-            )
-
-        out, f_partial_vjp = _vjp(
-            f_partial, *dyn_args
-        )  # dyn_args must only contain just one arg
+        out, f_partial_vjp = _leaf_vjp(flat_f, primals, i)
         if not isinstance(_V[i], _FlagSpJac):
             primals_vjp[i] = apply_sp_pullback(
                 f_partial_vjp, _V[i], transpose=transpose
             )
         else:
-            primals_vjp[i] = jax.vmap(f_partial_vjp)(_std_basis(out))[0]
+            flat_out, unravel = ravel_pytree(out)
+            basis = jax.vmap(unravel)(jnp.eye(flat_out.size, dtype=flat_out.dtype))
+            primals_vjp[i] = jax.vmap(f_partial_vjp)(basis)[0]
 
     return jtu.tree_unflatten(in_tree, primals_vjp)
 
@@ -384,37 +343,6 @@ def apply_sp_pullback(
     )
 
 
-def old_sp_jacrev(
-    fun: Callable[[_T], Array], V: _T, transpose: bool = False
-) -> Callable[[_T], Array]:
-    """
-    Retruns a function that will compute the jacobian of fun w.r.t
-    to its first positional argument, making use of the sparsity
-    structure of V.
-
-    Args:
-        fun: Function to use for computing the sparse jacobian.
-        V: PyTree with the same structure as the input pytree
-            of fun. Each leaf of the PyTree must be a SparseProjection
-            leaf.
-    """
-    apply_pullback = jtu.Partial(apply_sp_pullback, transpose=transpose)
-
-    def _sp_jacfun(primal_tree):
-        tree_pullback = tree_vjp(fun, primal_tree)
-
-        tree_sp_jacobians = jtu.tree_map(
-            apply_pullback,
-            tree_pullback,
-            V,
-            is_leaf=lambda node: isinstance(node, jtu.Partial),
-        )
-
-        return tree_sp_jacobians
-
-    return _sp_jacfun
-
-
 def sp_jacrev(
     fun: Callable[[_T], Array],
     V: _T,
@@ -435,9 +363,7 @@ def sp_jacrev(
     """
 
     def _sp_jacfun(*args):
-        f_partial, dyn_args = argnums_partial(
-            wrap_init(fun), argnums, args, require_static_args_hashable=False
-        )
+        f_partial, dyn_args = _partial_args(fun, argnums, args)
 
         # NOTE: V, when we flatten again might introduce extra None's
         # we cannot control this since it depends in the PyTree of the
@@ -445,7 +371,7 @@ def sp_jacrev(
         _V = (V, *(_FlagSpJac() for _ in range(1, len(dyn_args))))
 
         tree_jacobians = new_tree_vjp(
-            f_partial.call_wrapped, dyn_args, _V, transpose=transpose
+            f_partial, dyn_args, _V, transpose=transpose
         )
 
         if len(_V) == 1:

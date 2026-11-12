@@ -1,14 +1,14 @@
 # The Sparse n-Step Approximation in JAX
 
 ## Install
-Use [uv](https://docs.astral.sh/uv/) to install Python 3.11 and the locked
-dependencies, including an editable installation of `snapjax`:
+Use a current release of [uv](https://docs.astral.sh/uv/) to install Python
+3.13 and the locked dependencies, including an editable installation of `snapjax`:
 
 ```bash
 uv sync --locked
 ```
 
-This baseline supports CPU execution. It requires no CUDA toolkit, GPU, or
+This project supports CPU execution. It requires no CUDA toolkit, GPU, or
 prebuilt CUDA extension. Select the CPU backend before JAX initializes:
 
 ```bash
@@ -16,17 +16,19 @@ JAX_PLATFORMS=cpu uv run python your_script.py
 JAX_PLATFORMS=cpu uv run pytest
 ```
 
-The JAX, jaxlib, Equinox, and Numba versions are constrained deliberately while
-the project uses JAX's custom-call and internal sparse differentiation APIs.
-`uv.lock` records the complete tested environment; upgrading the JAX stack
-requires compatibility and numerical validation.
+The stack uses JAX/jaxlib 0.12.0.1, Equinox 0.13.8, Numba 0.68.1,
+NumPy 2.5.4, and pytest 9.2.0. `uv.lock` records the complete tested environment.
+The native-kernel stack is pinned because JAX upgrades require compatibility
+and numerical validation. Sparse differentiation uses the public `jax.vjp`
+API with fixed sparse indices.
 
 ## Sparse CPU primitive
 
 The sparse-preserving CSR–dense multiplication uses a Numba-compiled CPU kernel
 inside JAX's compiled execution. It computes only entries in the requested
 output pattern, without constructing a dense product. Numba compiles the kernel
-on the host; no separate C/C++ build step is needed.
+on the host; no separate C/C++ build step is needed. Registration and lowering
+use `jax.ffi` with XLA's unified, status-returning custom-call ABI.
 
 Historical CUDA sources remain in `snapjax/spp_primitives/gpu` for reference.
 They and the old platform-specific binary are excluded from distributions and

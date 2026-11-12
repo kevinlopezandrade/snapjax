@@ -3,9 +3,15 @@ import jax.experimental.sparse as jsparse
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as onp
+import pytest
 from jax.experimental.sparse.bcoo import BCOO
 
-from snapjax.sp_jacrev import SparseMask, make_jacobian_projection, sp_jacrev
+from snapjax.sp_jacrev import (
+    Mask,
+    SparseMask,
+    make_jacobian_projection,
+    sp_jacrev,
+)
 
 _SIZE = 50
 
@@ -128,3 +134,37 @@ def test_convolutional_2d_nonlinear():
     sparsity = SparseMask(sparsity.indices, sparsity.shape)
     actual = sparsejac.jacrev(fn, sparsity)(x_flat)
     onp.testing.assert_array_equal(expected, actual.todense())
+
+
+@pytest.mark.parametrize("sparse_type", [jsparse.BCOO, jsparse.BCSR])
+@pytest.mark.parametrize("argnums", [(2, 0), (-1, 0)])
+@pytest.mark.parametrize("compiled", [False, True])
+def test_sparse_parameter_tree_and_selected_arguments(sparse_type, argnums, compiled):
+    weights = sparse_type.fromdense(jnp.array([[1.0, 2.0], [0.0, -3.0]]))
+    bias = jnp.array([0.2, -0.5])
+    x = jnp.array([0.7, -0.1])
+    config = {"scale": 1.4}
+
+    def dense_reference(data, bias, x):
+        dense = jnp.array([[data[0], data[1]], [0.0, data[2]]])
+        return jnp.tanh(config["scale"] * (dense @ x) + bias)
+
+    expected_w, expected_bias, expected_x = jax.jacrev(
+        dense_reference, argnums=(0, 1, 2)
+    )(weights.data, bias, x)
+    pattern = jsparse.BCOO.fromdense(expected_w != 0)
+    projection = make_jacobian_projection({
+        "weights": SparseMask(pattern.indices, pattern.shape),
+        "bias": Mask(jnp.ones((2, 2))),
+    })
+
+    def fun(x, config, params):
+        return jnp.tanh(config["scale"] * (params["weights"] @ x) + params["bias"])
+
+    jacfun = sp_jacrev(fun, projection, argnums=argnums)
+    if compiled:
+        jacfun = jax.jit(jacfun)
+    actual_params, actual_x = jacfun(x, config, {"weights": weights, "bias": bias})
+    onp.testing.assert_allclose(actual_params["weights"].todense(), expected_w, atol=1e-14)
+    onp.testing.assert_allclose(actual_params["bias"], expected_bias, atol=1e-14)
+    onp.testing.assert_allclose(actual_x, expected_x, atol=1e-14)

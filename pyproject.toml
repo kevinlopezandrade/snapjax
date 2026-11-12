@@ -4,19 +4,19 @@ version = "0.0.1"
 description = "Practical Real Time Recurrent Learning with a Sparse Approximation"
 readme = "README.md"
 authors = [{ name = "Kevin Lopez", email = "kevinlo@ethz.ch" }]
-requires-python = ">=3.11,<3.12"
-# Keep the JAX/custom-call baseline fixed while restoring CPU support.
+requires-python = ">=3.13,<3.14"
+# Pin the tested JAX/native-kernel stack; uv.lock records all dependencies.
 dependencies = [
-    "jax==0.4.38",
-    "jaxlib==0.4.38",
-    "equinox==0.11.10",
-    "numba==0.61.2",
-    "numpy>=1.26.4,<2",
-    "scipy>=1.12,<1.16",
-    "chex==0.1.88",
-    "jaxtyping>=0.2.25,<0.3",
-    "networkx>=3.2.1,<4",
-    "optax==0.2.4",
+    "jax==0.12.0.1",
+    "jaxlib==0.12.0.1",
+    "equinox==0.13.8",
+    "numba==0.68.1",
+    "numpy>=2.5.4,<2.6",
+    "scipy>=1.18.1,<2",
+    "chex==0.1.92",
+    "jaxtyping>=0.3.11,<0.4",
+    "networkx>=3.7,<4",
+    "optax==0.2.9",
 ]
 
 [build-system]
@@ -24,7 +24,7 @@ requires = ["hatchling>=1.26,<2"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["pytest>=8.2,<9"]
+dev = ["pytest>=9.2,<10"]
 
 [tool.hatch.build]
 exclude = ["snapjax/spp_primitives/gpu", "*.so", "snapjax/display-gpu-info.sh"]
