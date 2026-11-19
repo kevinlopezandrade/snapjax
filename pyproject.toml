@@ -28,7 +28,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = ["pytest>=9.2,<10"]
-experiments = ["minfx==0.7.5", "matplotlib>=3.11.2,<4"]
+experiments = ["matplotlib>=3.11.2,<4"]
 
 [tool.hatch.build]
 exclude = ["*.so", "snapjax/display-gpu-info.sh"]

@@ -161,5 +161,4 @@ notebooks/
 *.npy
 
 runs/
-.neptune/
 results/gpu_validation/
