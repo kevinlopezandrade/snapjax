@@ -1,8 +1,8 @@
-"""Sparse-preserving multiplication with native CPU kernels.
+"""Sparse-preserving multiplication with native CPU and optional CUDA kernels.
 
 The Numba callbacks use XLA's unified, status-returning custom-call ABI. Keep them
 alive for as long as compiled JAX executables may hold their function pointers.
-CUDA sources are archival and are never imported or registered here.
+The separately built snapjax_cuda extension supplies typed GPU FFI handlers.
 """
 
 from functools import partial
@@ -63,6 +63,20 @@ for _dtype, _kernel in _CPU_KERNELS.items():
         _CPU_TARGETS[_dtype], ffi.pycapsule(_kernel.ctypes), platform="cpu", api_version=0
     )
 
+try:
+    import snapjax_cuda as _cuda
+except ModuleNotFoundError as error:
+    if error.name != "snapjax_cuda":
+        raise
+    _cuda = None
+
+_CUDA_TARGETS = {
+    dtype: f"snapjax_spp_csr_matmul_cuda_{dtype.name}" for dtype in _CPU_KERNELS
+}
+if _cuda is not None:
+    for _name, _handler in _cuda.registrations().items():
+        ffi.register_ffi_target(_name, _handler, platform="CUDA", api_version=1)
+
 
 def spp_csr_matmul(data, cols, indptr, RHS, sp):
     """Return ``(A @ RHS)[sp[:, 0], sp[:, 1]]`` without forming ``A @ RHS``.
@@ -74,7 +88,7 @@ def spp_csr_matmul(data, cols, indptr, RHS, sp):
     padded BCOO arrays. CSR row pointers must be monotone, start at zero, and
     end at ``len(data)``. The native kernel trusts these structural invariants.
 
-    Supports CPU execution, JIT, and vmap. No autodiff rule is provided for
+    Supports CPU and optional CUDA execution, JIT, and vmap. No autodiff rule is provided for
     this trace-update operation. Enable JAX's x64 mode before using float64.
     """
     return spp_csr_matmul_p.bind(
@@ -98,7 +112,7 @@ def _abstract_eval(data, cols, indptr, rhs, sp):
     if any(arg.dtype != np.dtype(np.int32) for arg in (cols, indptr, sp)):
         raise TypeError("cols, indptr, and sp must have dtype int32")
     if any(dim > np.iinfo(np.int32).max for arg in (data, indptr, rhs, sp) for dim in arg.shape):
-        raise ValueError("CPU kernel dimensions must fit in int32")
+        raise ValueError("Kernel dimensions must fit in int32")
     return ShapedArray((sp.shape[0],), data.dtype)
 
 
@@ -125,6 +139,20 @@ def _cpu_lowering(ctx, data, cols, indptr, rhs, sp):
 mlir.register_lowering(spp_csr_matmul_p, _cpu_lowering, platform="cpu")
 
 
+def _cuda_lowering(ctx, data, cols, indptr, rhs, sp):
+    if _cuda is None:
+        raise RuntimeError(
+            "The SnapJax CUDA extension is not installed. On Linux with a CUDA toolkit, "
+            "run `uv pip install ./snapjax/spp_primitives/gpu` from the source checkout."
+        )
+    return ffi.ffi_lowering(_CUDA_TARGETS[ctx.avals_in[0].dtype], api_version=4)(
+        ctx, data, cols, indptr, rhs, sp
+    )
+
+
+mlir.register_lowering(spp_csr_matmul_p, _cuda_lowering, platform="cuda")
+
+
 def _batch(args, axes):
     # Map only batched operands: shared CSR structures/RHS stay shared, and
     # lax.map keeps the compiled graph independent of the batch size.
@@ -146,8 +174,3 @@ def _batch(args, axes):
 
 
 batching.primitive_batchers[spp_csr_matmul_p] = _batch
-
-
-def mask_mat_mul(data, cols, indptr, A, B):
-    """Legacy CUDA-only operation, unavailable in the supported CPU runtime."""
-    raise NotImplementedError("mask_mat_mul is CUDA-only; snapjax now supports CPU execution")

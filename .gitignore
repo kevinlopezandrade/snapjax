@@ -162,3 +162,4 @@ notebooks/
 
 runs/
 .neptune/
+results/gpu_validation/

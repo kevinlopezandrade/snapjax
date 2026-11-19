@@ -19,6 +19,9 @@ dependencies = [
     "optax==0.2.9",
 ]
 
+[project.optional-dependencies]
+cuda13 = ["jax[cuda13]==0.12.0.1; sys_platform == 'linux'"]
+
 [build-system]
 requires = ["hatchling>=1.26,<2"]
 build-backend = "hatchling.build"
@@ -28,10 +31,11 @@ dev = ["pytest>=9.2,<10"]
 experiments = ["minfx==0.7.5", "matplotlib>=3.11.2,<4"]
 
 [tool.hatch.build]
-exclude = ["snapjax/spp_primitives/gpu", "*.so", "snapjax/display-gpu-info.sh"]
+exclude = ["*.so", "snapjax/display-gpu-info.sh"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["snapjax"]
+exclude = ["snapjax/spp_primitives/gpu"]
 
 [tool.pytest.ini_options]
 testpaths = ["snapjax/tests"]

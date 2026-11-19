@@ -1,48 +1,65 @@
+#include <limits>
 #include <nanobind/nanobind.h>
-#include <bit>
+#include "xla/ffi/api/ffi.h"
 #include "kernel.h"
-#include <cuda_runtime_api.h>
-#include <cusparse.h>
 
-// Required by JAX to encapsulate in _CUSTOM_CALL_TARGET
-template <typename T>
-nanobind::capsule EncapsulateFunction(T *fn) {
-    return nanobind::capsule(std::bit_cast<void*>(fn), "xla._CUSTOM_CALL_TARGET");
+namespace ffi = xla::ffi;
+namespace nb = nanobind;
+
+template <ffi::DataType dtype>
+ffi::Error SppImpl(cudaStream_t stream, ffi::Buffer<dtype, 1> data,
+    ffi::Buffer<ffi::S32, 1> cols, ffi::Buffer<ffi::S32, 1> indptr,
+    ffi::Buffer<dtype, 2> rhs, ffi::Buffer<ffi::S32, 2> pattern,
+    ffi::ResultBuffer<dtype, 1> output) {
+    const auto nnz = data.dimensions()[0];
+    const auto pointers = indptr.dimensions()[0];
+    const auto rhs_rows = rhs.dimensions()[0];
+    const auto rhs_cols = rhs.dimensions()[1];
+    const auto count = pattern.dimensions()[0];
+    if (cols.dimensions()[0] != nnz || pointers < 1 ||
+        pattern.dimensions()[1] != 2 || output->dimensions()[0] != count) {
+        return ffi::Error::InvalidArgument("Invalid sparse product buffer shapes");
+    }
+    for (auto size : {nnz, pointers, rhs_rows, rhs_cols, count}) {
+        if (size > std::numeric_limits<int32_t>::max()) {
+            return ffi::Error::InvalidArgument("Kernel dimensions must fit in int32");
+        }
+    }
+    const auto status = SppMatmul(stream, data.typed_data(), cols.typed_data(),
+        indptr.typed_data(), rhs.typed_data(), pattern.typed_data(),
+        int32_t(pointers - 1), int32_t(rhs_rows), int32_t(rhs_cols),
+        int32_t(count), output->typed_data());
+    if (status != cudaSuccess) return ffi::Error::Internal(cudaGetErrorString(status));
+    return ffi::Error::Success();
 }
 
-template <typename T>
-std::string PackDescriptorAsString(const T& descriptor) {
-    return std::string(std::bit_cast<const char*>(&descriptor), sizeof(T));
-}
+XLA_FFI_DEFINE_HANDLER_SYMBOL(SppFloat32, SppImpl<ffi::F32>,
+    (ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Arg<ffi::Buffer<ffi::F32, 1>>()
+        .Arg<ffi::Buffer<ffi::S32, 1>>()
+        .Arg<ffi::Buffer<ffi::S32, 1>>()
+        .Arg<ffi::Buffer<ffi::F32, 2>>()
+        .Arg<ffi::Buffer<ffi::S32, 2>>()
+        .Ret<ffi::Buffer<ffi::F32, 1>>()));
 
-template <typename T>
-nanobind::bytes PackDescriptor(const T& descriptor) {
-    std::string s = PackDescriptorAsString(descriptor);
-    return nanobind::bytes(s.data(), s.size());
-}
+XLA_FFI_DEFINE_HANDLER_SYMBOL(SppFloat64, SppImpl<ffi::F64>,
+    (ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Arg<ffi::Buffer<ffi::F64, 1>>()
+        .Arg<ffi::Buffer<ffi::S32, 1>>()
+        .Arg<ffi::Buffer<ffi::S32, 1>>()
+        .Arg<ffi::Buffer<ffi::F64, 2>>()
+        .Arg<ffi::Buffer<ffi::S32, 2>>()
+        .Ret<ffi::Buffer<ffi::F64, 1>>()));
 
-nanobind::dict Registrations() {
-    nanobind::dict dict;
-    dict["spp_csr_matmul_cuda"] = EncapsulateFunction(spp_mat_mul);
-    dict["spp_csr_matmul_cuda_double"] = EncapsulateFunction(spp_mat_mul_double);
-    dict["mask_mat_mul_cuda"] = EncapsulateFunction(mask_mat_mul);
-    return dict;
-}
-
-nanobind::bytes BuildCSRAndDenseDescriptor(
-        int data_size, int indptr_size, int sp_size,int B_dim_1, int B_dim_2)
-{
-    return PackDescriptor(CSRAndDenseDescriptor{data_size, indptr_size, sp_size, B_dim_1, B_dim_2});
-}
-
-nanobind::bytes BuildSDDMMDescriptor(
-        int nnz, int A_dim_1, int A_dim_2, int B_dim_1, int B_dim_2)
-{
-    return PackDescriptor(SDDMMDescriptor{nnz, A_dim_1, A_dim_2, B_dim_1, B_dim_2});
-}
-
-NB_MODULE(sp_ops, m) {
-    m.def("registrations", &Registrations);
-    m.def("build_csr_and_dense_descriptor", &BuildCSRAndDenseDescriptor);
-    m.def("build_sddmm_descriptor", &BuildSDDMMDescriptor);
+NB_MODULE(snapjax_cuda, module) {
+    module.def("registrations", [] {
+        nb::dict targets;
+        targets["snapjax_spp_csr_matmul_cuda_float32"] = nb::capsule(
+            reinterpret_cast<void*>(SppFloat32), "xla._CUSTOM_CALL_TARGET");
+        targets["snapjax_spp_csr_matmul_cuda_float64"] = nb::capsule(
+            reinterpret_cast<void*>(SppFloat64), "xla._CUSTOM_CALL_TARGET");
+        return targets;
+    });
 }

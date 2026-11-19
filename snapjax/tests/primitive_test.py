@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.sparse import csr_matrix
 
-from snapjax.spp_primitives.primitives import mask_mat_mul, spp_csr_matmul
+from snapjax.spp_primitives.primitives import spp_csr_matmul
 
 
 def example(dtype):
@@ -25,7 +25,7 @@ def test_sampled_product(dtype, compiled):
     call = jax.jit(spp_csr_matmul) if compiled else spp_csr_matmul
     result = call(*args)
     assert result.dtype == dtype
-    assert result.devices() == {jax.devices("cpu")[0]}
+    assert result.devices() == {jax.devices()[0]}
     np.testing.assert_allclose(result, expected, rtol=2e-7 if dtype == np.float32 else 1e-14)
 
 
@@ -87,7 +87,57 @@ def test_nested_and_empty_batching():
     assert jax.jit(jax.vmap(call))(empty).shape == (0, len(expected))
 
 
-def test_scan_uses_native_cpu_target():
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_multiple_blocks_and_transposed_rhs(dtype):
+    rng = np.random.default_rng(17)
+    a = rng.normal(size=(67, 51)).astype(dtype)
+    a[rng.random(a.shape) < 0.8] = 0
+    a[4] = 0
+    b_transposed = rng.normal(size=(29, 51)).astype(dtype)
+    csr = csr_matrix(a)
+    pattern = np.column_stack((rng.integers(0, 67, 1027), rng.integers(0, 29, 1027))).astype(np.int32)
+    expected = (a @ b_transposed.T)[pattern[:, 0], pattern[:, 1]]
+    pattern = np.concatenate((pattern, [[67, 0], [0, 29], [-1, 0], [0, -1]])).astype(np.int32)
+
+    @jax.jit
+    def run(data, cols, pointers, rhs, sp):
+        return spp_csr_matmul(data, cols, pointers, rhs.T, sp)
+
+    result = run(*(jnp.asarray(v) for v in
+                   (csr.data, csr.indices, csr.indptr, b_transposed, pattern)))
+    np.testing.assert_allclose(result[:1027], expected,
+        rtol=2e-5 if dtype == np.float32 else 1e-12,
+        atol=2e-6 if dtype == np.float32 else 1e-12)
+    np.testing.assert_array_equal(result[1027:], 0)
+
+
+@pytest.mark.parametrize("use_scan", [False, True])
+def test_sparse_rtrl_matches_dense_trace_update(use_scan):
+    from snapjax.algos import rtrl
+    from snapjax.cells.utils import densify_jacobian_mask
+    from snapjax.losses import masked_quadratic
+    from snapjax.sp_jacrev import make_jacobian_projection
+    from snapjax.tests.utils import get_sparse_continous_rnn
+
+    model = get_sparse_continous_rnn(8, 5, sparsity_fraction=0.75)
+    mask = model.get_snap_n_mask(2)
+    dense_mask = densify_jacobian_mask(mask)
+    rng = np.random.default_rng(23)
+    inputs, targets = (jnp.asarray(rng.normal(size=(7, 5))) for _ in range(2))
+    loss_mask = jnp.array([0., 1., 1., 0., 1., 1., 1.])
+
+    def run(jacobian_mask):
+        return rtrl(model, inputs, targets, loss_mask,
+                    jacobian_mask=jacobian_mask,
+                    jacobian_projection=make_jacobian_projection(jacobian_mask),
+                    loss_func=masked_quadratic, use_scan=use_scan)
+
+    actual, expected = run(mask), run(dense_mask)
+    for a, b in zip(jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True):
+        np.testing.assert_allclose(a, b, rtol=1e-10, atol=1e-11)
+
+
+def test_scan_uses_native_target():
     args, expected = example(np.float64)
 
     def run(rhs):
@@ -99,7 +149,8 @@ def test_scan_uses_native_cpu_target():
     compiled = jax.jit(run)
     np.testing.assert_allclose(compiled(args[3]), np.tile(expected, (3, 1)))
     hlo = compiled.lower(args[3]).as_text()
-    assert "snapjax_spp_csr_matmul_float64" in hlo
+    suffix = "cuda_float64" if jax.default_backend() == "gpu" else "float64"
+    assert f"snapjax_spp_csr_matmul_{suffix}" in hlo
     assert "stablehlo.dot_general" not in hlo
 
 
@@ -132,8 +183,3 @@ def test_rejects_mismatched_dtypes_and_shapes():
         bad[position] = replacement
         with pytest.raises(ValueError):
             jax.jit(spp_csr_matmul)(*bad)
-
-
-def test_cuda_only_helper_is_explicitly_unsupported():
-    with pytest.raises(NotImplementedError, match="CUDA-only"):
-        mask_mat_mul(None, None, None, None, None)

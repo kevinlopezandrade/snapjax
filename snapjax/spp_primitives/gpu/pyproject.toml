@@ -1,0 +1,15 @@
+[build-system]
+requires = ["scikit-build-core>=0.11,<1", "nanobind>=2.9,<3", "jax==0.12.0.1"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "snapjax-cuda"
+version = "0.0.1"
+description = "Optional CUDA kernels for SnapJax's sparse-preserving products"
+requires-python = ">=3.13,<3.14"
+dependencies = ["jax==0.12.0.1"]
+
+[tool.scikit-build]
+cmake.version = ">=3.30"
+wheel.packages = []
+sdist.include = ["CMakeLists.txt", "kernel.h", "kernel.cc.cu", "sp_ops.cc"]

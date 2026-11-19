@@ -107,10 +107,11 @@ def ensure_static_codebase(
 
 
 def set_cuda():
-    """Legacy GPU selector, unavailable in the supported CPU runtime."""
-    raise RuntimeError(
-        "snapjax now supports CPU execution; set JAX_PLATFORMS=cpu before starting Python"
-    )
+    """Select CUDA before backend initialization (or set JAX_PLATFORMS=cuda,cpu)."""
+    from jax import config
+
+    os.environ["JAX_PLATFORMS"] = "cuda,cpu"
+    config.update("jax_platforms", "cuda,cpu")
 
 
 def get_algorithm(algorithm: Algorithm):

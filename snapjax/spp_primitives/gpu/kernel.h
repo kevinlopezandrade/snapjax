@@ -1,23 +1,14 @@
+#pragma once
+
+#include <cstdint>
 #include <cuda_runtime_api.h>
-#include <cusparse.h>
 
-// I need a struct for the data.
-struct CSRAndDenseDescriptor{
-    int data_size;
-    int indptr_size;
-    int sp_size;
-    int B_dim_1;
-    int B_dim_2;
-};
-
-struct SDDMMDescriptor{
-    int nnz;
-    int A_dim_1;
-    int A_dim_2;
-    int B_dim_1;
-    int B_dim_2;
-};
-
-void spp_mat_mul(cudaStream_t stream, void **buffers, const char *opaque, std::size_t opaque_len);
-void spp_mat_mul_double(cudaStream_t stream, void **buffers, const char *opaque, std::size_t opaque_len);
-void mask_mat_mul(cudaStream_t stream, void **buffers, const char *opaque, std::size_t opaque_len);
+// Compute only the requested entries of a CSR--dense product on XLA's stream.
+cudaError_t SppMatmul(cudaStream_t stream, const float* data,
+    const int32_t* cols, const int32_t* indptr, const float* rhs,
+    const int32_t* pattern, int32_t rows, int32_t rhs_rows,
+    int32_t rhs_cols, int32_t count, float* output);
+cudaError_t SppMatmul(cudaStream_t stream, const double* data,
+    const int32_t* cols, const int32_t* indptr, const double* rhs,
+    const int32_t* pattern, int32_t rows, int32_t rhs_rows,
+    int32_t rhs_cols, int32_t count, double* output);
